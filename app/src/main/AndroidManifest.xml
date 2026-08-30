@@ -17,17 +17,41 @@
         </intent>
     </queries>
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <application
         android:allowBackup="false"
         android:label="Harness Droid"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.NoActionBar">
+        android:theme="@android:style/Theme.Material.NoActionBar">
         
         <!-- The Foreground Service hosting the Agent Loop -->
         <service
             android:name=".core.HarnessService"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="autonomous_agent"/>
+        </service>
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".tools.MockWebBrowserService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.tree4five.harness.ACTION_PROVIDE_TOOLS" />
+            </intent-filter>
+        </service>
 
     </application>
 

@@ -14,8 +14,8 @@ import java.util.Locale
  * of the agent's internal thinking, plans, and tool execution.
  * Critical for debugging, auditing, and ensuring safety in embedded environments.
  */
-class ForensicLogger(context: Context) {
-    private val logFile = File(context.filesDir, "forensics_safety.log")
+open class ForensicLogger(private val context: Context?) {
+    private val logFile = if (context != null) File(context.filesDir, "forensics_safety.log") else File("/tmp", "forensics_safety.log")
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
     init {
@@ -23,7 +23,7 @@ class ForensicLogger(context: Context) {
     }
 
     @Synchronized
-    fun logEvent(tag: String, message: String) {
+    open fun logEvent(tag: String, message: String) {
         val timestamp = dateFormat.format(Date())
         val logEntry = "[$timestamp] [$tag] $message\n"
         

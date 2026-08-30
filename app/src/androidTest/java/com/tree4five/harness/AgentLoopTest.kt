@@ -12,7 +12,7 @@ import kotlinx.coroutines.runBlocking
 class AgentLoopTest {
 
     @Test
-    fun `test loop stops when max turns reached`() = runBlocking {
+    fun testLoopStopsWhenMaxTurnsReached() = runBlocking {
         // Mock LLM that always returns a tool call (infinite loop simulation)
         val mockLlmClient = MockLLMClient(alwaysCallTool = true)
         val mockToolRegistry = MockToolRegistry()
@@ -29,7 +29,7 @@ class AgentLoopTest {
     }
 
     @Test
-    fun `test loop successfully executes tool and returns final answer`() = runBlocking {
+    fun testLoopSuccessfullyExecutesToolAndReturnsFinalAnswer() = runBlocking {
         val mockLlmClient = MockLLMClient(alwaysCallTool = false)
         val mockToolRegistry = MockToolRegistry()
         val mockPersistence = MockSessionPersistence()
@@ -46,7 +46,7 @@ class AgentLoopTest {
 
 // --- Mocks to make tests completely local and fast to review ---
 
-class MockLLMClient(private val alwaysCallTool: Boolean) : com.tree4five.harness.llm.LLMClient(null as android.content.Context?) {
+class MockLLMClient(private val alwaysCallTool: Boolean) : com.tree4five.harness.llm.LLMClient(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?) {
     private var turn = 0
     override suspend fun generateText(prompt: String): String {
         turn++
@@ -58,7 +58,7 @@ class MockLLMClient(private val alwaysCallTool: Boolean) : com.tree4five.harness
     }
 }
 
-class MockToolRegistry : com.tree4five.harness.tools.ToolRegistry(null as android.content.Context?, null) {
+class MockToolRegistry : com.tree4five.harness.tools.ToolRegistry(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext, null) {
     var executionCount = 0
     override suspend fun discoverAndBindTools(): String = "[]"
     override suspend fun executeTool(toolName: String, jsonArgs: String): String {
@@ -67,12 +67,12 @@ class MockToolRegistry : com.tree4five.harness.tools.ToolRegistry(null as androi
     }
 }
 
-class MockSessionPersistence : SessionPersistence(null as android.content.Context?, "test") {
+class MockSessionPersistence : SessionPersistence(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?, "test") {
     private val memory = mutableListOf<SessionEvent>()
     override suspend fun flushLog(log: List<SessionEvent>) { memory.addAll(log) }
     override suspend fun loadLog(): MutableList<SessionEvent> = mutableListOf()
 }
 
-class ForensicLoggerMock : ForensicLogger(null as android.content.Context?) {
+class ForensicLoggerMock : ForensicLogger(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?) {
     override fun logEvent(tag: String, message: String) {}
 }

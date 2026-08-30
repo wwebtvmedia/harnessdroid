@@ -1,6 +1,11 @@
 package com.tree4five.harness.ui
 
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -16,82 +21,150 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tree4five.harness.core.SessionEvent
+import com.tree4five.harness.core.HarnessService
+import kotlinx.coroutines.launch
 
-/**
- * Professional Frontend for harnessDroid.
- * Matches the Tree4Five LLM Provider look and feel (Material 3).
- * Visualizes the thinking mechanism, plans, and tools used.
- */
 class MainActivity : ComponentActivity() {
+    private var harnessServiceState = mutableStateOf<HarnessService?>(null)
+    private var isBound = false
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(className: ComponentName, service: IBinder) {
+            val binder = service as HarnessService.LocalBinder
+            harnessServiceState.value = binder.getService()
+            isBound = true
+        }
+        override fun onServiceDisconnected(arg0: ComponentName) {
+            harnessServiceState.value = null
+            isBound = false
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        Intent(this, HarnessService::class.java).also { intent ->
+            bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            startService(intent) // Keep it running
+        }
+
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(
-                primary = Color(0xFF4CAF50), // Tree4Five Green
-                background = Color(0xFF121212),
-                surface = Color(0xFF1E1E1E)
-            )) {
+            MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF4CAF50), background = Color(0xFF121212), surface = Color(0xFF1E1E1E))) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    HarnessScreen()
+                    HarnessScreen(harnessServiceState.value)
                 }
             }
         }
     }
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isBound) unbindService(connection)
+    }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HarnessScreen() {
+fun HarnessScreen(harnessService: HarnessService?) {
     var inputText by remember { mutableStateOf("") }
+    var showPlanMenu by remember { mutableStateOf(false) }
     
-    // Mocking the state that would come from HarnessService.uiState
-    val chatLog = remember { mutableStateListOf<SessionEvent>() }
+    // Dynamically collect state from the service, or default to empty
+    val chatLog = harnessService?.uiState?.collectAsState(initial = emptyList())?.value ?: emptyList()
     
-    // Examples provided for the user
+    var activePermissionRequest by remember { mutableStateOf<com.tree4five.harness.core.PermissionRequest?>(null) }
+    
+    LaunchedEffect(harnessService) {
+        harnessService?.permissionRequests?.collect { req ->
+            activePermissionRequest = req
+        }
+    }
+
+    activePermissionRequest?.let { req ->
+        PermissionPopup(
+            toolName = req.toolName,
+            reason = req.reason,
+            onApprove = {
+                harnessService?.providePermissionResponse(req.id, true)
+                activePermissionRequest = null
+            },
+            onDeny = {
+                harnessService?.providePermissionResponse(req.id, false)
+                activePermissionRequest = null
+            }
+        )
+    }
+    
     val examples = listOf(
         "Summarize my unread emails using the MailTool.",
         "Turn off the living room lights via SmartHomeTool.",
-        "Analyze the system forensics log and find errors."
+        "Search the web for deepseek harness"
     )
 
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text("Tree4Five Harness", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        // Examples Row
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            examples.forEach { ex ->
-                AssistChip(
-                    onClick = { inputText = ex },
-                    label = { Text(ex, maxLines = 1) }
-                )
+    if (showPlanMenu) {
+        AlertDialog(
+            onDismissRequest = { showPlanMenu = false },
+            title = { Text("Agent Execution Plan") },
+            text = {
+                val planSteps = chatLog.filter { it.role == "assistant" || it.role == "tool" || it.role == "system" }
+                LazyColumn {
+                    items(planSteps) { step ->
+                        Text(
+                            text = "${step.role.uppercase()}: ${step.content}",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            color = if (step.role == "assistant") Color(0xFF4CAF50) else Color.LightGray
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showPlanMenu = false }) { Text("Close") }
             }
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
+        )
+    }
 
-        // Chat / Thinking Visualization Log
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            items(chatLog) { event ->
-                EventBubble(event)
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-        }
-
-        // Input Area
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = { inputText = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Enter request for the autonomous agent...") }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Tree4Five Harness", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
+                actions = {
+                    Button(onClick = { showPlanMenu = true }) {
+                        Text("View Plan")
+                    }
+                }
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(onClick = { 
-                chatLog.add(SessionEvent("user", inputText))
-                // Here we would call harnessService.startTask(inputText)
-                inputText = ""
-            }) {
-                Text("Run")
+        }
+    ) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                examples.forEach { ex ->
+                    AssistChip(onClick = { inputText = ex }, label = { Text(ex, maxLines = 1) })
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+
+            LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                items(chatLog) { event ->
+                    EventBubble(event)
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Enter request...") }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(onClick = { 
+                    harnessService?.startTask(inputText)
+                    inputText = ""
+                }, enabled = harnessService != null) {
+                    Text("Run")
+                }
             }
         }
     }
@@ -125,9 +198,6 @@ fun EventBubble(event: SessionEvent) {
     }
 }
 
-/**
- * Mechanism to popup a proposition for non-allowed tasks
- */
 @Composable
 fun PermissionPopup(toolName: String, reason: String, onApprove: () -> Unit, onDeny: () -> Unit) {
     AlertDialog(

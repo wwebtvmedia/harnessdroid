@@ -54,12 +54,12 @@ data class SessionEvent(
  * 2. GZIP significantly reduces flash memory wear and I/O overhead.
  * 3. Uses Android's internal app cache/files dir, preventing cross-app snooping.
  */
-class SessionPersistence(private val context: Context, private val sessionId: String) {
+open class SessionPersistence(private val context: Context?, private val sessionId: String) {
     private val TAG = "SessionPersistence"
     
     // Store in internal secure app storage
     private val memoryFile: File
-        get() = File(context.filesDir, "sessions/${sessionId}.jsonl.gz")
+        get() = if (context != null) File(context.filesDir, "sessions/${sessionId}.jsonl.gz") else File("/tmp", "sessions/${sessionId}.jsonl.gz")
 
     init {
         memoryFile.parentFile?.mkdirs()
@@ -74,7 +74,7 @@ class SessionPersistence(private val context: Context, private val sessionId: St
      * 
      * For robust append-only, we will maintain an active session log in memory and flush to the gzipped file.
      */
-    suspend fun flushLog(log: List<SessionEvent>) = withContext(Dispatchers.IO) {
+    open suspend fun flushLog(log: List<SessionEvent>): Unit = withContext(Dispatchers.IO) {
         try {
             FileOutputStream(memoryFile).use { fos ->
                 GZIPOutputStream(fos).use { gzipOs ->
@@ -93,7 +93,7 @@ class SessionPersistence(private val context: Context, private val sessionId: St
     /**
      * Loads the entire session history from the compressed NoSQL log.
      */
-    suspend fun loadLog(): MutableList<SessionEvent> = withContext(Dispatchers.IO) {
+    open suspend fun loadLog(): MutableList<SessionEvent> = withContext(Dispatchers.IO) {
         val loadedLog = mutableListOf<SessionEvent>()
         if (!memoryFile.exists()) return@withContext loadedLog
         

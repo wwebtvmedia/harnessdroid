@@ -71,9 +71,23 @@ class HarnessService : Service(), HumanInteractionHandler {
     fun startTask(request: String) {
         forensicLogger.logEvent("TASK_START", "Received user request: $request")
         scope.launch {
+            // Instantly update the UI so the user knows it's working
+            val currentLog = SessionPersistence(this@HarnessService, "session_1").loadLog()
+            currentLog.add(SessionEvent("user", request))
+            _uiState.value = currentLog
+
+            val updateJob = launch {
+                while(true) {
+                    kotlinx.coroutines.delay(1000)
+                    _uiState.value = SessionPersistence(this@HarnessService, "session_1").loadLog()
+                }
+            }
+
             val result = agentLoop.runTask(request)
+            updateJob.cancel()
+            
             forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
-            // Update UI state
+            // Update UI state with the full final result
             _uiState.value = SessionPersistence(this@HarnessService, "session_1").loadLog()
         }
     }
@@ -121,7 +135,11 @@ class HarnessService : Service(), HumanInteractionHandler {
             .build()
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null // Using bound service flow is better, but simplified here
+    inner class LocalBinder : android.os.Binder() {
+        fun getService(): HarnessService = this@HarnessService
+    }
+
+    override fun onBind(intent: Intent?): IBinder = LocalBinder()
 
     override fun onDestroy() {
         super.onDestroy()

@@ -23,9 +23,9 @@ data class BoundToolService(
     val connection: ServiceConnection
 )
 
-class ToolRegistry(
-    private val context: Context,
-    private val interactionManager: InteractionManager
+open class ToolRegistry(
+    private val context: Context?,
+    private val interactionManager: InteractionManager?
 ) {
     private val TAG = "ToolRegistry"
     private val boundServices = mutableMapOf<String, BoundToolService>()
@@ -34,11 +34,11 @@ class ToolRegistry(
     /**
      * Discovers all apps that expose the harness tool AIDL interface.
      */
-    suspend fun discoverAndBindTools(): String = withContext(Dispatchers.IO) {
+    open suspend fun discoverAndBindTools(): String = withContext(Dispatchers.IO) {
         val intent = Intent("com.tree4five.harness.ACTION_PROVIDE_TOOLS")
         
         // Requires <queries> in AndroidManifest.xml to work on API 30+
-        val resolveInfos = context.packageManager.queryIntentServices(intent, PackageManager.GET_META_DATA)
+        val resolveInfos = context?.packageManager?.queryIntentServices(intent, PackageManager.GET_META_DATA)
         val allSchemas = JSONArray()
 
         // We can also inject the built-in Human-in-the-loop tool here
@@ -57,7 +57,7 @@ class ToolRegistry(
         """.trimIndent()
         allSchemas.put(org.json.JSONObject(builtInAskHuman))
 
-        for (resolveInfo in resolveInfos) {
+        for (resolveInfo in resolveInfos ?: emptyList()) {
             val packageName = resolveInfo.serviceInfo.packageName
             val className = resolveInfo.serviceInfo.name
             val component = ComponentName(packageName, className)
@@ -96,9 +96,9 @@ class ToolRegistry(
         }
 
         val intent = Intent().apply { component = componentName }
-        val success = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        val success = context?.bindService(intent, connection, Context.BIND_AUTO_CREATE)
         
-        if (!success) {
+        if (success != true) {
             continuation.resumeWithException(SecurityException("Could not bind to tool service: ${componentName.flattenToString()}"))
         }
     }
@@ -107,11 +107,11 @@ class ToolRegistry(
      * Executes a tool asynchronously over AIDL and waits for the callback result.
      * Incorporates human-in-the-loop Guard checks before firing external intents.
      */
-    suspend fun executeTool(toolName: String, jsonArgs: String): String = withContext(Dispatchers.IO) {
+    open suspend fun executeTool(toolName: String, jsonArgs: String): String = withContext(Dispatchers.IO) {
         // Handle built-in tools first
         if (toolName == "ask_human_for_input") {
             val prompt = org.json.JSONObject(jsonArgs).optString("prompt", "User input required:")
-            return@withContext interactionManager.requestHumanInput(prompt)
+            return@withContext interactionManager?.requestHumanInput(prompt) ?: ""
         }
 
         val packageName = toolRoutingTable[toolName] 
@@ -122,7 +122,7 @@ class ToolRegistry(
 
         // Security Guard: Hand over control to the human to approve this intent
         // In a real app, you could have a whitelist/blacklist of safe tools to avoid prompting every time.
-        val isApproved = interactionManager.requireIntentPermission(toolName, packageName, jsonArgs)
+        val isApproved = interactionManager?.requireIntentPermission(toolName, packageName, jsonArgs) ?: true
         if (!isApproved) {
             return@withContext "{\"error\": \"User denied permission to execute this tool.\"}"
         }
@@ -148,7 +148,7 @@ class ToolRegistry(
 
     fun unbindAll() {
         boundServices.values.forEach { 
-            context.unbindService(it.connection) 
+            context?.unbindService(it.connection) 
         }
         boundServices.clear()
         toolRoutingTable.clear()

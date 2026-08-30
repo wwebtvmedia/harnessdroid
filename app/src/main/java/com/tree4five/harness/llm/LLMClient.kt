@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class LLMClient(private val context: Context) {
+open class LLMClient(private val context: Context?) {
     private var llmService: ILLMService? = null
     private var isBound = false
     private val TAG = "LLMClient"
@@ -48,14 +48,14 @@ class LLMClient(private val context: Context) {
             setPackage("com.tree4five.gguf") // Security: Explicitly target the LLM Provider app to prevent intent hijacking
         }
         
-        val bound = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-        if (!bound) {
+        val bound = context?.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        if (bound != true) {
             continuation.resumeWithException(SecurityException("Unable to bind to LLMProvider service. Ensure the app is installed and permissions are granted."))
         }
 
         continuation.invokeOnCancellation {
             if (isBound) {
-                context.unbindService(connection)
+                context?.unbindService(connection)
                 isBound = false
                 llmService = null
             }
@@ -66,7 +66,7 @@ class LLMClient(private val context: Context) {
      * Executes a prompt securely and iteratively waits for the complete response.
      * For embedded constraints, we avoid high-frequency UI updates and just return the final string.
      */
-    suspend fun generateText(prompt: String): String = withContext(Dispatchers.IO) {
+    open suspend fun generateText(prompt: String): String = withContext(Dispatchers.IO) {
         val service = getService()
         suspendCancellableCoroutine { continuation ->
             val callback = object : ILLMCallback.Stub() {
