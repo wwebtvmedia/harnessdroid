@@ -19,7 +19,7 @@ android {
 
     signingConfigs {
         create("shared_key") {
-            storeFile = file("../../LLMProvider/release.keystore")
+            storeFile = file("release.keystore")
             storePassword = project.findProperty("MYAPP_RELEASE_STORE_PASSWORD") as String? ?: "password123"
             keyAlias = project.findProperty("MYAPP_RELEASE_KEY_ALIAS") as String? ?: "key0"
             keyPassword = project.findProperty("MYAPP_RELEASE_KEY_PASSWORD") as String? ?: "password123"
