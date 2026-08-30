@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.tree4five.harness">
+
+    <!-- 
+        SECURITY: In modern Android (API 30+), an app cannot blindly see other apps.
+        We must explicitly declare that we intend to query packages that respond to our
+        specific Tool Provider AIDL intent. This ensures the OS grants us visibility
+        only to apps that explicitly volunteer to be Harness plugins.
+    -->
+    <queries>
+        <intent>
+            <action android:name="com.tree4five.harness.ACTION_PROVIDE_TOOLS" />
+        </intent>
+        <intent>
+            <action android:name="com.tree4five.gguf.ACTION_LLM_SERVICE" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="Harness Droid"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.NoActionBar">
+        
+        <!-- The Foreground Service hosting the Agent Loop -->
+        <service
+            android:name=".core.HarnessService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
+
+    </application>
+
+</manifest>
