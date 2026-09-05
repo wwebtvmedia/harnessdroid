@@ -47,16 +47,39 @@ class AgentLoop(
             val contextStr = buildContextString(sessionLog)
             val osInfo = "Android OS API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
             val step1Prompt = """
-                [SYSTEM INFO: You are HarnessDroid, an Android Orchestration Agent running on $osInfo.]
-                [CAPABILITY TRAINING: You must translate user requests into Android Intents (Tools). To see what you can do, you can use the "list_harness_intents" tool. If the user asks about the OS, use "get_os_info". Always use a tool if available!]
-                $contextStr
-                
-                You are a helpful AI assistant. To solve the goal, you can use one of these tools:
-                $toolSummaryList
-                
-                Which tool do you want to use next? 
-                Reply ONLY with the exact name of the tool, or reply "NONE" if you are ready to give the final answer.
-            """.trimIndent()
+<SYSTEM>
+You are HarnessDroid, an Android Agent on $osInfo.
+Your ONLY way to interact with the device is by outputting a TOOL NAME.
+
+AVAILABLE TOOLS:
+$toolSummaryList
+
+RULES:
+1. You MUST output EXACTLY ONE tool name from the list above.
+2. Do NOT output any other text. Do NOT explain.
+3. If the user wants to list tools, output: list_harness_intents
+4. If the user asks about OS/device, output: get_os_info
+5. If you absolutely do not need any tool, output: NONE
+
+EXAMPLE 1:
+User: "please list all tools accessible"
+Assistant: list_harness_intents
+
+EXAMPLE 2:
+User: "what os is this?"
+Assistant: get_os_info
+
+EXAMPLE 3:
+User: "turn on the lights"
+Assistant: SmartHomeTool
+</SYSTEM>
+
+CONVERSATION HISTORY:
+$contextStr
+
+User request requires a tool. Which tool do you choose?
+Assistant:"""
+.trimIndent()
             
             forensicLogger.logEvent("FSM_STATE_1", "Asking LLM to pick a tool.")
             val rawToolChoice = llmClient.generateText(step1Prompt).trim()
