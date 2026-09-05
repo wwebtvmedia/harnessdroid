@@ -22,103 +22,86 @@ data class PermissionRequest(
     val reason: String
 )
 
-/**
- * Background Foreground Service keeping the Agent alive.
- * Acts as the bridge between the UI (Frontend) and the AgentLoop.
- */
 class HarnessService : Service(), HumanInteractionHandler {
 
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
     
-    // UI State exposed to the Frontend
     private val _uiState = MutableStateFlow<List<SessionEvent>>(emptyList())
     val uiState: StateFlow<List<SessionEvent>> = _uiState.asStateFlow()
 
-    // Channel to push permission requests to the UI popup
+    // Add forensic state so UI can observe it
+    private val _forensicState = MutableStateFlow<List<String>>(emptyList())
+    val forensicState: StateFlow<List<String>> = _forensicState.asStateFlow()
+
     val permissionRequests = MutableSharedFlow<PermissionRequest>(extraBufferCapacity = 1)
     
-    // Channel to receive human decisions back from the UI
     private val permissionResponses = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<Boolean>>()
 
     private lateinit var agentLoop: AgentLoop
     private lateinit var forensicLogger: ForensicLogger
+    private lateinit var sessionPersistence: SessionPersistence
 
     override fun onCreate() {
         super.onCreate()
         startForeground(1, createNotification())
         
-        forensicLogger = ForensicLogger(this)
+        forensicLogger = object : ForensicLogger(this) {
+            override fun logEvent(tag: String, message: String) {
+                super.logEvent(tag, message)
+                // Add to our observable flow for the debug UI
+                val logLine = "[$tag] $message"
+                _forensicState.value = _forensicState.value + logLine
+            }
+        }
+        
         forensicLogger.logEvent("SYSTEM", "HarnessService started.")
         
-        // Initialize dependencies (In a real app, use Dagger/Hilt)
         val llmClient = com.ai.harnessdroid.llm.LLMClient(this)
         val interactionManager = InteractionManager(this)
         val toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
-        val sessionPersistence = SessionPersistence(this, "session_1")
+        
+        sessionPersistence = SessionPersistence(this, "session_1")
         
         agentLoop = AgentLoop(llmClient, toolRegistry, sessionPersistence, forensicLogger)
         
-        // Load initial state for the UI
         scope.launch {
-            _uiState.value = sessionPersistence.loadLog()
+            sessionPersistence.initializeLog()
+            sessionPersistence.logFlow.collect {
+                _uiState.value = it
+            }
         }
     }
 
-    /**
-     * Called by the UI to execute a request
-     */
     fun startTask(request: String) {
         forensicLogger.logEvent("TASK_START", "Received user request: $request")
         scope.launch {
-            // Instantly update the UI so the user knows it's working
-            val currentLog = SessionPersistence(this@HarnessService, "session_1").loadLog()
+            val currentLog = sessionPersistence.loadLog()
             currentLog.add(SessionEvent("user", request))
-            _uiState.value = currentLog
-
-            val updateJob = launch {
-                while(true) {
-                    kotlinx.coroutines.delay(1000)
-                    _uiState.value = SessionPersistence(this@HarnessService, "session_1").loadLog()
-                }
-            }
+            sessionPersistence.flushLog(currentLog)
 
             val result = agentLoop.runTask(request)
-            updateJob.cancel()
-            
             forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
-            // Update UI state with the full final result
-            _uiState.value = SessionPersistence(this@HarnessService, "session_1").loadLog()
         }
     }
 
-    /**
-     * Implements HumanInteractionHandler.
-     * Suspends the AgentLoop until the UI provides an answer.
-     */
     override suspend fun askForPermission(toolName: String, intentPackage: String, reason: String): Boolean {
         forensicLogger.logEvent("GUARD_ASK", "Requesting user permission for tool: $toolName")
         val requestId = java.util.UUID.randomUUID().toString()
         val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
         permissionResponses[requestId] = deferred
         
-        // Push the request to the UI
         permissionRequests.emit(PermissionRequest(requestId, toolName, intentPackage, reason))
         
-        // Suspend until the UI calls providePermissionResponse()
         val approved = deferred.await()
         forensicLogger.logEvent("GUARD_RESPONSE", "Permission for $toolName was ${if (approved) "APPROVED" else "DENIED"}")
         return approved
     }
 
     override suspend fun askUserForInput(prompt: String): String {
-        // Simplified for this example, but would follow the same CompletableDeferred pattern
         return "User input not implemented in this mock"
     }
 
-    /**
-     * Called by the UI when the user clicks Allow/Deny on the popup
-     */
     fun providePermissionResponse(requestId: String, approved: Boolean) {
         permissionResponses[requestId]?.complete(approved)
         permissionResponses.remove(requestId)

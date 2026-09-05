@@ -3,21 +3,21 @@ package com.ai.harnessdroid.core
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.util.zip.GZIPInputStream
-import java.util.zip.GZIPOutputStream
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
-/**
- * Event type for the append-only session log with timestamping.
- */
 data class SessionEvent(
-    val role: String, // "system", "user", "assistant", "tool"
+    val role: String,
     val content: String,
     val timestamp: Long = System.currentTimeMillis(),
     val toolName: String? = null
@@ -44,37 +44,27 @@ data class SessionEvent(
     }
 }
 
-/**
- * Professional embedded NoSQL memory engine.
- * Mirrors DeepSeek's 'session-persistence-jsonl'.
- * Implements an append-only JSON Lines (JSONL) format compressed natively via GZIP.
- * 
- * Why this is secure & embedded-friendly:
- * 1. Append-only ensures atomic writes and prevents corruption during power-loss.
- * 2. GZIP significantly reduces flash memory wear and I/O overhead.
- * 3. Uses Android's internal app cache/files dir, preventing cross-app snooping.
- */
 open class SessionPersistence(private val context: Context?, private val sessionId: String) {
     private val TAG = "SessionPersistence"
     
-    // Store in internal secure app storage
     private val memoryFile: File
         get() = if (context != null) File(context.filesDir, "sessions/${sessionId}.jsonl.gz") else File("/tmp", "sessions/${sessionId}.jsonl.gz")
+
+    private val _logFlow = MutableStateFlow<List<SessionEvent>>(emptyList())
+    val logFlow: StateFlow<List<SessionEvent>> = _logFlow.asStateFlow()
 
     init {
         memoryFile.parentFile?.mkdirs()
     }
 
-    /**
-     * Appends a new event to the compressed NoSQL log.
-     * To avoid decompressing the whole file just to append, we use GZIP appending.
-     * Note: Standard Java GZIPOutputStream doesn't natively support appending to an existing GZIP payload easily
-     * without rewriting, so for true embedded efficiency, we rewrite the compressed stream 
-     * or keep an uncompressed working buffer and only compress on checkpoint/close.
-     * 
-     * For robust append-only, we will maintain an active session log in memory and flush to the gzipped file.
-     */
+    open suspend fun initializeLog() {
+        val loaded = loadLog()
+        _logFlow.value = loaded
+    }
+
     open suspend fun flushLog(log: List<SessionEvent>): Unit = withContext(Dispatchers.IO) {
+        // Update the flow immediately so the UI reacts instantly without polling
+        _logFlow.value = ArrayList(log)
         try {
             FileOutputStream(memoryFile).use { fos ->
                 GZIPOutputStream(fos).use { gzipOs ->
@@ -84,15 +74,11 @@ open class SessionPersistence(private val context: Context?, private val session
                     }
                 }
             }
-            Log.d(TAG, "Flushed ${log.size} events to compressed storage.")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to flush compressed memory", e)
         }
     }
 
-    /**
-     * Loads the entire session history from the compressed NoSQL log.
-     */
     open suspend fun loadLog(): MutableList<SessionEvent> = withContext(Dispatchers.IO) {
         val loadedLog = mutableListOf<SessionEvent>()
         if (!memoryFile.exists()) return@withContext loadedLog
@@ -110,7 +96,6 @@ open class SessionPersistence(private val context: Context?, private val session
                     }
                 }
             }
-            // Log.d removed to prevent logcat spam
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load compressed memory", e)
         }

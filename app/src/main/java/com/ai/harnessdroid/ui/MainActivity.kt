@@ -22,7 +22,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ai.harnessdroid.core.SessionEvent
 import com.ai.harnessdroid.core.HarnessService
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var harnessServiceState = mutableStateOf<HarnessService?>(null)
@@ -45,7 +44,7 @@ class MainActivity : ComponentActivity() {
         
         Intent(this, HarnessService::class.java).also { intent ->
             bindService(intent, connection, Context.BIND_AUTO_CREATE)
-            startService(intent) // Keep it running
+            startService(intent)
         }
 
         setContent {
@@ -67,9 +66,10 @@ class MainActivity : ComponentActivity() {
 fun HarnessScreen(harnessService: HarnessService?) {
     var inputText by remember { mutableStateOf("") }
     var showPlanMenu by remember { mutableStateOf(false) }
+    var showDebugMenu by remember { mutableStateOf(false) }
     
-    // Dynamically collect state from the service, or default to empty
     val chatLog = harnessService?.uiState?.collectAsState(initial = emptyList())?.value ?: emptyList()
+    val forensicLog = harnessService?.forensicState?.collectAsState(initial = emptyList())?.value ?: emptyList()
     
     var activePermissionRequest by remember { mutableStateOf<com.ai.harnessdroid.core.PermissionRequest?>(null) }
     
@@ -93,34 +93,13 @@ fun HarnessScreen(harnessService: HarnessService?) {
             }
         )
     }
-    
-    val examples = listOf(
-        "Summarize my unread emails using the MailTool.",
-        "Turn off the living room lights via SmartHomeTool.",
-        "Search the web for deepseek harness"
-    )
 
     if (showPlanMenu) {
-        AlertDialog(
-            onDismissRequest = { showPlanMenu = false },
-            title = { Text("Agent Execution Plan") },
-            text = {
-                val planSteps = chatLog.filter { it.role == "assistant" || it.role == "tool" || it.role == "system" }
-                LazyColumn {
-                    items(planSteps) { step ->
-                        Text(
-                            text = "${step.role.uppercase()}: ${step.content}",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(vertical = 4.dp),
-                            color = if (step.role == "assistant") Color(0xFF4CAF50) else Color.LightGray
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = { showPlanMenu = false }) { Text("Close") }
-            }
-        )
+        PlanDialog(chatLog = chatLog, onDismiss = { showPlanMenu = false })
+    }
+
+    if (showDebugMenu) {
+        SystemMessageDialog(forensicLog = forensicLog, onDismiss = { showDebugMenu = false })
     }
 
     Scaffold(
@@ -128,6 +107,14 @@ fun HarnessScreen(harnessService: HarnessService?) {
             TopAppBar(
                 title = { Text("Tree4Five Harness", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
                 actions = {
+                    Button(onClick = { 
+                        harnessService?.startTask("please list all tools accessible")
+                    }, modifier = Modifier.padding(end = 4.dp)) {
+                        Text("List Tools")
+                    }
+                    Button(onClick = { showDebugMenu = true }, modifier = Modifier.padding(end = 4.dp)) {
+                        Text("System Log")
+                    }
                     Button(onClick = { showPlanMenu = true }) {
                         Text("View Plan")
                     }
@@ -136,6 +123,7 @@ fun HarnessScreen(harnessService: HarnessService?) {
         }
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
+            val examples = listOf("Summarize emails", "Turn off lights", "Search deepseek harness")
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 examples.forEach { ex ->
                     AssistChip(onClick = { inputText = ex }, label = { Text(ex, maxLines = 1) })
@@ -171,12 +159,59 @@ fun HarnessScreen(harnessService: HarnessService?) {
 }
 
 @Composable
+fun PlanDialog(chatLog: List<SessionEvent>, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Agent Execution Plan") },
+        text = {
+            val planSteps = chatLog.filter { it.role == "assistant" || it.role == "tool" || it.role == "system" }
+            LazyColumn {
+                items(planSteps) { step ->
+                    Text(
+                        text = "${step.role.uppercase()}: ${step.content}",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = if (step.role == "assistant") Color(0xFF4CAF50) else Color.LightGray
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
+fun SystemMessageDialog(forensicLog: List<String>, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("System/Forensic Logs") },
+        text = {
+            LazyColumn {
+                items(forensicLog) { logLine ->
+                    Text(
+                        text = logLine,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                        color = Color(0xFFB71C1C) // Red tinted for system logs
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
 fun EventBubble(event: SessionEvent) {
     val backgroundColor = when (event.role) {
         "user" -> Color(0xFF2E7D32)
         "tool" -> Color(0xFF424242)
         "assistant" -> Color(0xFF1E1E1E)
-        "system" -> Color(0xFFB71C1C) // Forensics/Safety alerts
+        "system" -> Color(0xFFB71C1C)
         else -> Color.Gray
     }
 
