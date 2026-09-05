@@ -63,6 +63,16 @@ open class ToolRegistry(
                 }
             }
         """.trimIndent()
+        val osInfoTool = """
+            {
+                "name": "get_os_info",
+                "description": "Get device OS version, API level, and Model information.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        """.trimIndent()
         val listIntentsTool = """
             {
                 "name": "list_harness_intents",
@@ -75,6 +85,7 @@ open class ToolRegistry(
         """.trimIndent()
         allSchemas.put(JSONObject(builtInAskHuman))
         allSchemas.put(JSONObject(listIntentsTool))
+        allSchemas.put(JSONObject(osInfoTool))
 
         for (resolveInfo in resolveInfos ?: emptyList()) {
             val packageName = resolveInfo.serviceInfo.packageName
@@ -179,9 +190,14 @@ open class ToolRegistry(
      */
     open suspend fun executeTool(toolName: String, jsonArgs: String): String = withContext(Dispatchers.IO) {
         // Handle built-in tools first
+        if (toolName == "get_os_info") {
+            val info = "Android API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
+            return@withContext "{\"result\": \"$info\"}"
+        }
+
         if (toolName == "list_harness_intents") {
             val available = toolRoutingTable.keys.joinToString(", ")
-            return@withContext "{"result": "Available intents: $available, ask_human_for_input, list_harness_intents"}"
+            return@withContext "{\"result\": \"Available intents: $available, ask_human_for_input, list_harness_intents, get_os_info\"}"
         }
 
         if (toolName == "ask_human_for_input") {

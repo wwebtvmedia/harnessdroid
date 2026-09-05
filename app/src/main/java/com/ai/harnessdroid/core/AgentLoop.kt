@@ -45,8 +45,10 @@ class AgentLoop(
             
             // FSM STATE 1: Intent & Tool Selection
             val contextStr = buildContextString(sessionLog)
+            val osInfo = "Android OS API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
             val step1Prompt = """
-                [TRAINING IN CONTEXT: You are HarnessDroid, an Android orchestration agent. The user will ask you to perform tasks. You must translate their natural language requests into the appropriate Tool Intents. For example, if the user asks "please list all tools accessible", you MUST output the tool name that lists intents, which is "list_harness_intents". Your job is to translate user intent into Harness tool usage.]
+                [SYSTEM INFO: You are HarnessDroid, an Android Orchestration Agent running on $osInfo.]
+                [CAPABILITY TRAINING: You must translate user requests into Android Intents (Tools). To see what you can do, you can use the "list_harness_intents" tool. If the user asks about the OS, use "get_os_info". Always use a tool if available!]
                 $contextStr
                 
                 You are a helpful AI assistant. To solve the goal, you can use one of these tools:
