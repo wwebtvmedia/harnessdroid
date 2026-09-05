@@ -1,78 +1,88 @@
-package com.tree4five.harness.core
+package com.ai.harnessdroid.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
 
-/**
- * Non-Regression (non-reg) tests for the Agent Loop.
- * Ensures the code is easy to review and mechanically sound.
- */
 class AgentLoopTest {
 
     @Test
     fun testLoopStopsWhenMaxTurnsReached() = runBlocking {
-        // Mock LLM that always returns a tool call (infinite loop simulation)
-        val mockLlmClient = MockLLMClient(alwaysCallTool = true)
+        // LLM keeps saying "mockTool" forever
+        val mockLlmClient = MockLLMClient(infiniteTool = true)
         val mockToolRegistry = MockToolRegistry()
         val mockPersistence = MockSessionPersistence()
         val logger = ForensicLoggerMock()
 
         val agentLoop = AgentLoop(mockLlmClient, mockToolRegistry, mockPersistence, logger)
-        
         val result = agentLoop.runTask("Do something", maxTurns = 3)
         
-        // Assert non-regression on loop bounds
         assertTrue(result.contains("Maximum turns reached"))
         assertEquals(3, mockToolRegistry.executionCount)
     }
 
     @Test
     fun testLoopSuccessfullyExecutesToolAndReturnsFinalAnswer() = runBlocking {
-        val mockLlmClient = MockLLMClient(alwaysCallTool = false)
+        // LLM says "mockTool" once, then "NONE"
+        val mockLlmClient = MockLLMClient(infiniteTool = false)
         val mockToolRegistry = MockToolRegistry()
         val mockPersistence = MockSessionPersistence()
         val logger = ForensicLoggerMock()
 
         val agentLoop = AgentLoop(mockLlmClient, mockToolRegistry, mockPersistence, logger)
-        
         val result = agentLoop.runTask("Get the weather", maxTurns = 5)
         
-        // Assert the LLM's final answer is returned
-        assertEquals("Final Answer", result)
+        assertTrue(result.contains("Final Answer"))
+        assertEquals(1, mockToolRegistry.executionCount)
     }
 }
 
-// --- Mocks to make tests completely local and fast to review ---
-
-class MockLLMClient(private val alwaysCallTool: Boolean) : com.tree4five.harness.llm.LLMClient(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?) {
-    private var turn = 0
+class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm.LLMClient(null as android.content.Context?) {
+    private var state = 0
     override suspend fun generateText(prompt: String): String {
-        turn++
-        return if (alwaysCallTool || turn == 1) {
-            """{"tool_call": {"name": "mockTool", "arguments": {}}}"""
+        return if (prompt.contains("Which tool do you want to use next?")) {
+            if (infiniteTool) {
+                "mockTool"
+            } else {
+                if (state == 0) {
+                    state = 1
+                    "mockTool"
+                } else {
+                    "NONE"
+                }
+            }
+        } else if (prompt.contains("JSON object containing the arguments")) {
+            "{ \"testArg\": \"val\" }"
         } else {
             "Final Answer"
         }
     }
 }
 
-class MockToolRegistry : com.tree4five.harness.tools.ToolRegistry(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext, null) {
+class MockToolRegistry : com.ai.harnessdroid.tools.ToolRegistry(null as android.content.Context?, null) {
     var executionCount = 0
-    override suspend fun discoverAndBindTools(): String = "[]"
+    override suspend fun discoverAndBindTools(): String {
+        val tool = JSONObject().apply {
+            put("name", "mockTool")
+            put("description", "A mock tool")
+        }
+        return JSONArray().put(tool).toString()
+    }
     override suspend fun executeTool(toolName: String, jsonArgs: String): String {
         executionCount++
         return "{\"result\": \"success\"}"
     }
 }
 
-class MockSessionPersistence : SessionPersistence(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?, "test") {
+class MockSessionPersistence : SessionPersistence(null as android.content.Context?, "test") {
     private val memory = mutableListOf<SessionEvent>()
     override suspend fun flushLog(log: List<SessionEvent>) { memory.addAll(log) }
     override suspend fun loadLog(): MutableList<SessionEvent> = mutableListOf()
 }
 
-class ForensicLoggerMock : ForensicLogger(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?) {
+class ForensicLoggerMock : ForensicLogger(null as android.content.Context?) {
     override fun logEvent(tag: String, message: String) {}
 }

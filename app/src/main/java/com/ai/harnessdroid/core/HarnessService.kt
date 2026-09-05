@@ -1,4 +1,4 @@
-package com.tree4five.harness.core
+package com.ai.harnessdroid.core
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -52,9 +52,9 @@ class HarnessService : Service(), HumanInteractionHandler {
         forensicLogger.logEvent("SYSTEM", "HarnessService started.")
         
         // Initialize dependencies (In a real app, use Dagger/Hilt)
-        val llmClient = com.tree4five.harness.llm.LLMClient(this)
+        val llmClient = com.ai.harnessdroid.llm.LLMClient(this)
         val interactionManager = InteractionManager(this)
-        val toolRegistry = com.tree4five.harness.tools.ToolRegistry(this, interactionManager)
+        val toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
         val sessionPersistence = SessionPersistence(this, "session_1")
         
         agentLoop = AgentLoop(llmClient, toolRegistry, sessionPersistence, forensicLogger)

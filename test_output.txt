@@ -1,0 +1,41 @@
+
+com.ai.harnessdroid.core.AgentLoopTest:.
+Error in testLoopStopsWhenMaxTurnsReached(com.ai.harnessdroid.core.AgentLoopTest):
+java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.ai.harnessdroid.core.AgentLoopTest$testLoopStopsWhenMaxTurnsReached$1.invokeSuspend(AgentLoopTest.kt:27)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:106)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:280)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:85)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:59)
+	at kotlinx.coroutines.BuildersKt.runBlocking(dex-id-965c6ef9ef9c1a092c99e2b1e6cc705c60a7b5e0:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:38)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(dex-id-965c6ef9ef9c1a092c99e2b1e6cc705c60a7b5e0:1)
+	at com.ai.harnessdroid.core.AgentLoopTest.testLoopStopsWhenMaxTurnsReached(AgentLoopTest.kt:15)
+
+
+Time: 0.128
+There was 1 failure:
+1) testLoopStopsWhenMaxTurnsReached(com.ai.harnessdroid.core.AgentLoopTest)
+java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.ai.harnessdroid.core.AgentLoopTest$testLoopStopsWhenMaxTurnsReached$1.invokeSuspend(AgentLoopTest.kt:27)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:106)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:280)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:85)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:59)
+	at kotlinx.coroutines.BuildersKt.runBlocking(dex-id-965c6ef9ef9c1a092c99e2b1e6cc705c60a7b5e0:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:38)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(dex-id-965c6ef9ef9c1a092c99e2b1e6cc705c60a7b5e0:1)
+	at com.ai.harnessdroid.core.AgentLoopTest.testLoopStopsWhenMaxTurnsReached(AgentLoopTest.kt:15)
+
+FAILURES!!!
+Tests run: 2,  Failures: 1
+
+

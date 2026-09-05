@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.tree4five.harness"
+    namespace = "com.ai.harnessdroid"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.tree4five.harness"
+        applicationId = "com.ai.harnessdroid"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -19,7 +19,7 @@ android {
 
     signingConfigs {
         create("shared_key") {
-            storeFile = file("release.keystore")
+            storeFile = file("../release.keystore")
             storePassword = project.findProperty("MYAPP_RELEASE_STORE_PASSWORD") as String? ?: "password123"
             keyAlias = project.findProperty("MYAPP_RELEASE_KEY_ALIAS") as String? ?: "key0"
             keyPassword = project.findProperty("MYAPP_RELEASE_KEY_PASSWORD") as String? ?: "password123"

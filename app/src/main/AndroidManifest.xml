@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.tree4five.harness">
+    >
 
     <!-- 
         SECURITY: In modern Android (API 30+), an app cannot blindly see other apps.
@@ -10,7 +10,7 @@
     -->
     <queries>
         <intent>
-            <action android:name="com.tree4five.harness.ACTION_PROVIDE_TOOLS" />
+            <action android:name="com.ai.harnessdroid.ACTION_PROVIDE_TOOLS" />
         </intent>
         <intent>
             <action android:name="com.tree4five.gguf.ACTION_LLM_SERVICE" />
@@ -49,7 +49,7 @@
             android:name=".tools.MockWebBrowserService"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.tree4five.harness.ACTION_PROVIDE_TOOLS" />
+                <action android:name="com.ai.harnessdroid.ACTION_PROVIDE_TOOLS" />
             </intent-filter>
         </service>
 

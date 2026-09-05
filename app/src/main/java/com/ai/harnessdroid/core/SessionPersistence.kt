@@ -1,4 +1,4 @@
-package com.tree4five.harness.core
+package com.ai.harnessdroid.core
 
 import android.content.Context
 import android.util.Log

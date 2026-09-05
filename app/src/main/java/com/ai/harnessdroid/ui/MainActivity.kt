@@ -1,4 +1,4 @@
-package com.tree4five.harness.ui
+package com.ai.harnessdroid.ui
 
 import android.content.ComponentName
 import android.content.Context
@@ -20,8 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.tree4five.harness.core.SessionEvent
-import com.tree4five.harness.core.HarnessService
+import com.ai.harnessdroid.core.SessionEvent
+import com.ai.harnessdroid.core.HarnessService
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -71,7 +71,7 @@ fun HarnessScreen(harnessService: HarnessService?) {
     // Dynamically collect state from the service, or default to empty
     val chatLog = harnessService?.uiState?.collectAsState(initial = emptyList())?.value ?: emptyList()
     
-    var activePermissionRequest by remember { mutableStateOf<com.tree4five.harness.core.PermissionRequest?>(null) }
+    var activePermissionRequest by remember { mutableStateOf<com.ai.harnessdroid.core.PermissionRequest?>(null) }
     
     LaunchedEffect(harnessService) {
         harnessService?.permissionRequests?.collect { req ->
