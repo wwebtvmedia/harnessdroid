@@ -63,7 +63,18 @@ open class ToolRegistry(
                 }
             }
         """.trimIndent()
+        val listIntentsTool = """
+            {
+                "name": "list_harness_intents",
+                "description": "Lists all currently accessible harness tools/intents available on this Android device.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        """.trimIndent()
         allSchemas.put(JSONObject(builtInAskHuman))
+        allSchemas.put(JSONObject(listIntentsTool))
 
         for (resolveInfo in resolveInfos ?: emptyList()) {
             val packageName = resolveInfo.serviceInfo.packageName
@@ -168,6 +179,11 @@ open class ToolRegistry(
      */
     open suspend fun executeTool(toolName: String, jsonArgs: String): String = withContext(Dispatchers.IO) {
         // Handle built-in tools first
+        if (toolName == "list_harness_intents") {
+            val available = toolRoutingTable.keys.joinToString(", ")
+            return@withContext "{"result": "Available intents: $available, ask_human_for_input, list_harness_intents"}"
+        }
+
         if (toolName == "ask_human_for_input") {
             val prompt = JSONObject(jsonArgs).optString("prompt", "User input required:")
             return@withContext interactionManager?.requestHumanInput(prompt) ?: ""

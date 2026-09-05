@@ -110,7 +110,7 @@ open class SessionPersistence(private val context: Context?, private val session
                     }
                 }
             }
-            Log.d(TAG, "Loaded ${loadedLog.size} events from compressed storage.")
+            // Log.d removed to prevent logcat spam
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load compressed memory", e)
         }
