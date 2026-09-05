@@ -92,10 +92,21 @@ Assistant:"""
             if (toolChoice == "NONE") {
                 // FSM STATE 1b: Final Answer Generation
                 val step1bPrompt = """
-                    $contextStr
-                    
-                    You decided no more tools are needed. Please provide the final answer to the user.
-                """.trimIndent()
+<SYSTEM>
+You are HarnessDroid. You have successfully gathered information using tools.
+Look at the CONVERSATION HISTORY below to see the results from your tools.
+Your job is to synthesize these results and provide the final answer to the user.
+If the user asked for a list of tools, output the list of tools from the tool result.
+If the user asked for the OS, output the OS from the tool result.
+Do NOT talk about needing or not needing tools. Just answer the user directly.
+</SYSTEM>
+
+CONVERSATION HISTORY:
+$contextStr
+
+Provide the final answer to the user based on the tool results above:
+Assistant:"""
+.trimIndent()
                 
                 forensicLogger.logEvent("FSM_STATE_1B", "Asking LLM for final answer.")
                 finalResult = llmClient.generateText(step1bPrompt).trim()
