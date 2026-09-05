@@ -19,10 +19,6 @@ open class LLMClient(private val context: Context?) {
     private var isBound = false
     private val TAG = "LLMClient"
 
-    /**
-     * Secures a connection to the local LLMProvider AIDL service.
-     * Uses suspendCancellableCoroutine to convert the callback-based IPC binding into a suspend function.
-     */
     private suspend fun getService(): ILLMService = suspendCancellableCoroutine { continuation ->
         if (llmService != null) {
             continuation.resume(llmService!!)
@@ -34,7 +30,9 @@ open class LLMClient(private val context: Context?) {
                 Log.i(TAG, "Connected to LLMProvider")
                 llmService = ILLMService.Stub.asInterface(service)
                 isBound = true
-                continuation.resume(llmService!!)
+                if (continuation.isActive) {
+                    continuation.resume(llmService!!)
+                }
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
@@ -45,12 +43,12 @@ open class LLMClient(private val context: Context?) {
         }
 
         val intent = Intent("com.tree4five.gguf.ACTION_LLM_SERVICE").apply {
-            setPackage("com.tree4five.gguf") // Security: Explicitly target the LLM Provider app to prevent intent hijacking
+            setPackage("com.tree4five.gguf")
         }
         
         val bound = context?.bindService(intent, connection, Context.BIND_AUTO_CREATE)
         if (bound != true) {
-            continuation.resumeWithException(SecurityException("Unable to bind to LLMProvider service. Ensure the app is installed and permissions are granted."))
+            continuation.resumeWithException(SecurityException("Unable to bind to LLMProvider service."))
         }
 
         continuation.invokeOnCancellation {
@@ -62,27 +60,29 @@ open class LLMClient(private val context: Context?) {
         }
     }
 
-    /**
-     * Executes a prompt securely and iteratively waits for the complete response.
-     * For embedded constraints, we avoid high-frequency UI updates and just return the final string.
-     */
     open suspend fun generateText(prompt: String): String = withContext(Dispatchers.IO) {
         val service = getService()
         suspendCancellableCoroutine { continuation ->
+            // Strongly reference the callback so it isn't garbage collected!
             val callback = object : ILLMCallback.Stub() {
-                override fun onTokenReceived(token: String) {
-                    // Intentionally empty for embedded systems to avoid IPC overhead / CPU wake locks on every single token.
-                    // We only care about the final JSON output for tool calling.
-                }
-                
+                override fun onTokenReceived(token: String) {}
                 override fun onGenerationComplete(fullText: String) {
-                    continuation.resume(fullText)
+                    if (continuation.isActive) {
+                        continuation.resume(fullText)
+                    }
                 }
             }
             try {
                 service.generateTextStream(prompt, callback)
+                
+                // Keep the strong reference alive for the duration of the suspend call
+                continuation.invokeOnCancellation {
+                    val keepAlive = callback
+                }
             } catch (e: Exception) {
-                continuation.resumeWithException(e)
+                if (continuation.isActive) {
+                    continuation.resumeWithException(e)
+                }
             }
         }
     }
