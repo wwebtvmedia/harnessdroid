@@ -73,6 +73,12 @@ class HarnessService : Service(), HumanInteractionHandler {
         }
     }
 
+    fun clearLog() {
+        scope.launch {
+            sessionPersistence.clearLog()
+        }
+    }
+
     fun startTask(request: String) {
         forensicLogger.logEvent("TASK_START", "Received user request: $request")
         scope.launch {

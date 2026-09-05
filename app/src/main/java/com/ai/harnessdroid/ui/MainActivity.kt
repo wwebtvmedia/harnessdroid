@@ -112,6 +112,9 @@ fun HarnessScreen(harnessService: HarnessService?) {
                     }, modifier = Modifier.padding(end = 4.dp)) {
                         Text("List Tools")
                     }
+                    Button(onClick = { harnessService?.clearLog() }, modifier = Modifier.padding(end = 4.dp)) {
+                        Text("Clear")
+                    }
                     Button(onClick = { showDebugMenu = true }, modifier = Modifier.padding(end = 4.dp)) {
                         Text("System Log")
                     }

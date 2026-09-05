@@ -62,6 +62,11 @@ open class SessionPersistence(private val context: Context?, private val session
         _logFlow.value = loaded
     }
 
+    open suspend fun clearLog() = withContext(Dispatchers.IO) {
+        _logFlow.value = emptyList()
+        if (memoryFile.exists()) memoryFile.delete()
+    }
+
     open suspend fun flushLog(log: List<SessionEvent>): Unit = withContext(Dispatchers.IO) {
         // Update the flow immediately so the UI reacts instantly without polling
         _logFlow.value = ArrayList(log)

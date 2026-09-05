@@ -57,7 +57,9 @@ class AgentLoop(
             """.trimIndent()
             
             forensicLogger.logEvent("FSM_STATE_1", "Asking LLM to pick a tool.")
-            var toolChoice = llmClient.generateText(step1Prompt).trim()
+            val rawToolChoice = llmClient.generateText(step1Prompt).trim()
+            forensicLogger.logEvent("FSM_STATE_1_RESPONSE", "LLM replied: $rawToolChoice")
+            var toolChoice = rawToolChoice
             
             // Harness applies robust validation
             toolChoice = extractToolName(toolChoice, toolsArray)
@@ -128,6 +130,14 @@ class AgentLoop(
     }
     
     private fun extractToolName(llmOutput: String, toolsArray: JSONArray): String {
+        for (i in 0 until toolsArray.length()) {
+            val name = toolsArray.getJSONObject(i).optString("name")
+            if (llmOutput.trim().equals(name, ignoreCase = true)) return name
+        }
+        for (i in 0 until toolsArray.length()) {
+            val name = toolsArray.getJSONObject(i).optString("name")
+            if (llmOutput.contains(name, ignoreCase = true)) return name
+        }
         val upperOut = llmOutput.uppercase()
         if (upperOut.contains("NONE")) return "NONE"
         
