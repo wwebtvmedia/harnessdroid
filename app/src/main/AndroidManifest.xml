@@ -10,6 +10,18 @@
     -->
     <queries>
         <intent>
+            <action android:name="android.intent.action.VIEW" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+        </intent>
+        <intent>
             <action android:name="com.ai.harnessdroid.ACTION_PROVIDE_TOOLS" />
         </intent>
         <intent>
@@ -64,7 +76,9 @@
             android:exported="true"
             android:permission="com.ai.harnessdroid.permission.BIND_TOOL_PROVIDER">
             <intent-filter>
-                <action android:name="com.ai.harnessdroid.ACTION_PROVIDE_TOOLS" />
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </service>
 

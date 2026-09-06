@@ -35,18 +35,44 @@ open class ToolRegistry(
     private val TAG = "ToolRegistry"
     private val boundServices = mutableMapOf<String, BoundToolService>()
     private val toolRoutingTable = mutableMapOf<String, String>() // Maps toolName -> packageName
-    
+
     private val mcpRequestId = AtomicInteger(1)
     private val pendingRequests = ConcurrentHashMap<Int, Continuation<JSONObject>>()
 
+    open fun discoveryIntentActions(): List<String> = listOf(
+        Intent.ACTION_VIEW,
+        Intent.ACTION_SEND,
+        Intent.ACTION_SENDTO,
+        Intent.ACTION_MAIN,
+        "com.ai.harnessdroid.ACTION_PROVIDE_TOOLS"
+    )
+
     /**
      * Discovers all apps that expose the harness tool AIDL interface.
+     * Standard Android intents are preferred; legacy custom-action discovery is kept as a fallback.
      */
     open suspend fun discoverAndBindTools(): String = withContext(Dispatchers.IO) {
-        val intent = Intent("com.ai.harnessdroid.ACTION_PROVIDE_TOOLS")
-        
-        // Requires <queries> in AndroidManifest.xml to work on API 30+
-        val resolveInfos = context?.packageManager?.queryIntentServices(intent, PackageManager.GET_META_DATA)
+        val allIntentCandidates = discoveryIntentActions().map { action ->
+            when (action) {
+                Intent.ACTION_MAIN -> Intent(action).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+                else -> Intent(action).apply { addCategory(Intent.CATEGORY_DEFAULT) }
+            }
+        }.toMutableList()
+
+        val resolveInfos = mutableListOf<android.content.pm.ResolveInfo>()
+        val seenServices = mutableSetOf<String>()
+
+        for (intent in allIntentCandidates) {
+            val queried = context?.packageManager?.queryIntentServices(intent, PackageManager.GET_META_DATA) ?: emptyList()
+            for (resolveInfo in queried) {
+                val key = "${resolveInfo.serviceInfo.packageName}/${resolveInfo.serviceInfo.name}"
+                if (key !in seenServices) {
+                    resolveInfos.add(resolveInfo)
+                    seenServices.add(key)
+                }
+            }
+        }
+
         val allSchemas = JSONArray()
 
         // We can also inject the built-in Human-in-the-loop tool here
@@ -124,21 +150,7 @@ open class ToolRegistry(
         allSchemas.put(JSONObject(listSkillCommandsTool))
         allSchemas.put(JSONObject(skillAgentCommandTool))
         
-        // Mock read_emails tool for the Summarize Emails workflow
-        val readEmailsTool = JSONObject().apply {
-            put("name", "read_emails")
-            put("description", "Reads the latest unread emails from the user's inbox.")
-            put("parameters", JSONObject().apply {
-                put("type", "object")
-                put("properties", JSONObject().apply {
-                    put("count", JSONObject().apply {
-                        put("type", "integer")
-                        put("description", "Number of emails to read (default: 5)")
-                    })
-                })
-            })
-        }
-        allSchemas.put(readEmailsTool)
+        // Removed mock read_emails tool. Real tools will be discovered via Intent.
 
         // Create a single tool that lets the LLM launch any app by name, to avoid blowing up context window
         val pm = context?.packageManager
@@ -158,6 +170,26 @@ open class ToolRegistry(
                 })
             }
             allSchemas.put(launchAppTool)
+            
+            val sendIntentTool = JSONObject().apply {
+                put("name", "send_android_intent")
+                put("description", "Send a standard Android intent to launch an action. E.g. view a URL, send an email, dial a number.")
+                put("parameters", JSONObject().apply {
+                    put("type", "object")
+                    put("properties", JSONObject().apply {
+                        put("action", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The intent action, e.g. 'android.intent.action.VIEW', 'android.intent.action.SENDTO'")
+                        })
+                        put("data_uri", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The data URI, e.g. 'mailto:person@example.com', 'tel:1234567890', 'http://example.com'")
+                        })
+                    })
+                    put("required", org.json.JSONArray().put("action"))
+                })
+            }
+            allSchemas.put(sendIntentTool)
             
             // Build a lookup table of appName -> packageName for executeTool
             val mainIntent = Intent(Intent.ACTION_MAIN, null)
@@ -321,33 +353,7 @@ open class ToolRegistry(
             return@withContext interactionManager?.requestHumanInput(prompt) ?: ""
         }
 
-        if (toolName == "read_emails") {
-            val count = JSONObject(jsonArgs).optInt("count", 3)
-            val emails = JSONArray()
-            emails.put(JSONObject().apply {
-                put("from", "boss@company.com")
-                put("subject", "URGENT: Q3 Report")
-                put("body", "I need the Q3 report by 5 PM today. Please make sure the graphs are updated.")
-            })
-            emails.put(JSONObject().apply {
-                put("from", "newsletter@techcrunch.com")
-                put("subject", "AI Agent breakthrough")
-                put("body", "DeepMind researchers just announced a new AI agent framework...")
-            })
-            emails.put(JSONObject().apply {
-                put("from", "mom@family.com")
-                put("subject", "Dinner tonight?")
-                put("body", "Are you still coming over for dinner? I am making lasagna.")
-            })
-            
-            // Return only up to 'count' emails
-            val result = JSONArray()
-            for (i in 0 until minOf(count, emails.length())) {
-                result.put(emails.getJSONObject(i))
-            }
-            
-            return@withContext "{\"result\": \"Successfully read emails\", \"emails\": $result}"
-        }
+
 
         if (toolName == "launch_app") {
             val appName = JSONObject(jsonArgs).optString("app_name", "").lowercase()
