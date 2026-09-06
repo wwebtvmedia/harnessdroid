@@ -48,37 +48,58 @@ class AgentLoop(
             val osInfo = "Android OS API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
             val step1Prompt = """
 <SYSTEM>
-You are HarnessDroid, an Android Agent on $osInfo.
-Your ONLY way to interact with the device is by outputting a TOOL NAME.
+You are an AI Agent running on an Android device ($osInfo).
+The user may speak to you in any language.
+Your ONLY way to act is by outputting a precise TOOL NAME.
 
 AVAILABLE TOOLS:
 $toolSummaryList
 
 RULES:
-1. You MUST output EXACTLY ONE tool name from the list above.
-2. Do NOT output any other text. Do NOT explain.
-3. If the user wants to list tools, output: list_harness_intents
-4. If the user asks about OS/device, output: get_os_info
-5. If you absolutely do not need any tool, output: NONE
+- You MUST output EXACTLY ONE tool name from the list above.
+- Do NOT output any other text, reasoning, or translation.
+- If the user wants to list tools, output: list_harness_intents
+- If the user asks about OS/device, output: get_os_info
+- If you have enough information to answer the user directly without a tool, output: NONE
 
-EXAMPLE 1:
-User: "please list all tools accessible"
-Assistant: list_harness_intents
+EXAMPLES:
+<CONVERSATION_HISTORY>
+<USER_MSG>please list all tools accessible</USER_MSG>
+</CONVERSATION_HISTORY>
+<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output ONLY the tool name, or NONE.</INSTRUCTION>
+<OUTPUT>
+list_harness_intents
+</OUTPUT>
 
-EXAMPLE 2:
-User: "what os is this?"
-Assistant: get_os_info
+<CONVERSATION_HISTORY>
+<USER_MSG>what os is this?</USER_MSG>
+</CONVERSATION_HISTORY>
+<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output ONLY the tool name, or NONE.</INSTRUCTION>
+<OUTPUT>
+get_os_info
+</OUTPUT>
 
-EXAMPLE 3:
-User: "turn on the lights"
-Assistant: SmartHomeTool
+<CONVERSATION_HISTORY>
+<USER_MSG>what os is this?</USER_MSG>
+<TOOL_RESULT name="get_os_info">{"result": "Android API 34, Model: Pixel 7"}</TOOL_RESULT>
+</CONVERSATION_HISTORY>
+<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output ONLY the tool name, or NONE.</INSTRUCTION>
+<OUTPUT>
+NONE
+</OUTPUT>
 </SYSTEM>
 
-CONVERSATION HISTORY:
+<CONVERSATION_HISTORY>
 $contextStr
+</CONVERSATION_HISTORY>
 
-User request requires a tool. Which tool do you choose?
-Assistant:"""
+<INSTRUCTION>
+Based on the conversation history, which tool do you choose to use next?
+Output ONLY the tool name, or NONE.
+</INSTRUCTION>
+
+<OUTPUT>
+"""
 .trimIndent()
             
             forensicLogger.logEvent("FSM_STATE_1", "Asking LLM to pick a tool.")
@@ -93,19 +114,22 @@ Assistant:"""
                 // FSM STATE 1b: Final Answer Generation
                 val step1bPrompt = """
 <SYSTEM>
-You are HarnessDroid. You have successfully gathered information using tools.
-Look at the CONVERSATION HISTORY below to see the results from your tools.
-Your job is to synthesize these results and provide the final answer to the user.
-If the user asked for a list of tools, output the list of tools from the tool result.
-If the user asked for the OS, output the OS from the tool result.
+You are an AI Agent. You have gathered information using tools.
+Review the CONVERSATION HISTORY below to see the results from your tools.
+Synthesize these results and provide the final answer to the user in their preferred language.
 Do NOT talk about needing or not needing tools. Just answer the user directly.
 </SYSTEM>
 
-CONVERSATION HISTORY:
+<CONVERSATION_HISTORY>
 $contextStr
+</CONVERSATION_HISTORY>
 
-Provide the final answer to the user based on the tool results above:
-Assistant:"""
+<INSTRUCTION>
+Provide the final answer to the user based on the tool results above.
+</INSTRUCTION>
+
+<OUTPUT>
+"""
 .trimIndent()
                 
                 forensicLogger.logEvent("FSM_STATE_1B", "Asking LLM for final answer.")
@@ -118,13 +142,20 @@ Assistant:"""
             // FSM STATE 2: Argument Extraction
             val toolSchema = getToolSchema(toolChoice, toolsArray)
             val step2Prompt = """
-                $contextStr
-                
-                You chose the tool: $toolChoice
-                The required arguments schema is: 
-                $toolSchema
-                
-                Reply ONLY with a valid JSON object containing the arguments for this tool.
+<CONVERSATION_HISTORY>
+$contextStr
+</CONVERSATION_HISTORY>
+
+<INSTRUCTION>
+You chose the tool: $toolChoice
+The required arguments schema is: 
+$toolSchema
+
+Reply ONLY with a valid JSON object containing the arguments for this tool.
+Do NOT output any other text or explanation.
+</INSTRUCTION>
+
+<OUTPUT>
             """.trimIndent()
             
             forensicLogger.logEvent("FSM_STATE_2", "Asking LLM to generate arguments for $toolChoice.")
@@ -166,23 +197,30 @@ Assistant:"""
     }
     
     private fun extractToolName(llmOutput: String, toolsArray: JSONArray): String {
-        for (i in 0 until toolsArray.length()) {
-            val name = toolsArray.getJSONObject(i).optString("name")
-            if (llmOutput.trim().equals(name, ignoreCase = true)) return name
-        }
-        for (i in 0 until toolsArray.length()) {
-            val name = toolsArray.getJSONObject(i).optString("name")
-            if (llmOutput.contains(name, ignoreCase = true)) return name
-        }
-        val upperOut = llmOutput.uppercase()
-        if (upperOut.contains("NONE")) return "NONE"
+        val trimmed = llmOutput.trim()
         
+        // 1. Exact match for tool names
         for (i in 0 until toolsArray.length()) {
             val name = toolsArray.getJSONObject(i).optString("name")
-            if (llmOutput.contains(name, ignoreCase = true)) {
-                return name
-            }
+            if (trimmed.equals(name, ignoreCase = true)) return name
         }
+        
+        // 2. Exact match for NONE
+        if (trimmed.equals("NONE", ignoreCase = true)) return "NONE"
+        
+        val upperOut = trimmed.uppercase()
+        
+        // 3. If NONE is mentioned prominently (e.g. at the start or by itself)
+        if (upperOut.startsWith("NONE") || upperOut.contains("NONE")) {
+            return "NONE"
+        }
+        
+        // 4. Substring match for tool names
+        for (i in 0 until toolsArray.length()) {
+            val name = toolsArray.getJSONObject(i).optString("name")
+            if (trimmed.contains(name, ignoreCase = true)) return name
+        }
+        
         return "NONE" // Fallback guardrail
     }
     
@@ -200,10 +238,10 @@ Assistant:"""
         val builder = java.lang.StringBuilder()
         for (event in log) {
             when (event.role) {
-                "system" -> builder.append("System: ${event.content}\n")
-                "user" -> builder.append("User: ${event.content}\n")
-                "assistant" -> builder.append("Assistant: ${event.content}\n")
-                "tool" -> builder.append("Tool [${event.toolName}]: ${event.content}\n")
+                "system" -> builder.append("<SYSTEM_MSG>\n${event.content}\n</SYSTEM_MSG>\n")
+                "user" -> builder.append("<USER_MSG>\n${event.content}\n</USER_MSG>\n")
+                "assistant" -> builder.append("<ASSISTANT_MSG>\n${event.content}\n</ASSISTANT_MSG>\n")
+                "tool" -> builder.append("<TOOL_RESULT name=\"${event.toolName}\">\n${event.content}\n</TOOL_RESULT>\n")
             }
         }
         return builder.toString()

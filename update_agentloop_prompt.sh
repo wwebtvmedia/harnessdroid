@@ -1,0 +1,5 @@
+#!/bin/bash
+sed -i 's/val step1Prompt = """/val osInfo = "Android OS API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"\n            val step1Prompt = """/g' app/src/main/java/com/ai/harnessdroid/core/AgentLoop.kt
+
+sed -i 's/\[TRAINING IN CONTEXT: You are HarnessDroid, an Android orchestration agent. The user will ask you to perform tasks. You must translate their natural language requests into the appropriate Tool Intents. For example, if the user asks "please list all tools accessible", you MUST output the tool name that lists intents, which is "list_harness_intents". Your job is to translate user intent into Harness tool usage.\]/[SYSTEM INFO: You are HarnessDroid, an Android Orchestration Agent running on $osInfo.]\n                [CAPABILITY TRAINING: You must translate user requests into Android Intents (Tools). To see what you can do, you can use the "list_harness_intents" tool. If the user asks about the OS, use "get_os_info". Always use a tool if available!]/g' app/src/main/java/com/ai/harnessdroid/core/AgentLoop.kt
+

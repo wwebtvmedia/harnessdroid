@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import com.ai.harnessdroid.core.SessionEvent
 import com.ai.harnessdroid.core.HarnessService
 
@@ -120,6 +122,56 @@ fun HarnessScreen(harnessService: HarnessService?) {
                     }
                     Button(onClick = { showPlanMenu = true }) {
                         Text("View Plan")
+                    }
+
+                    var showMenu by remember { mutableStateOf(false) }
+                    var showVersionDialog by remember { mutableStateOf(false) }
+                    var showHelpDialog by remember { mutableStateOf(false) }
+
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu")
+                    }
+
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Help") },
+                            onClick = { 
+                                showMenu = false
+                                showHelpDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Version") },
+                            onClick = { 
+                                showMenu = false
+                                showVersionDialog = true
+                            }
+                        )
+                    }
+
+                    if (showVersionDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showVersionDialog = false },
+                            title = { Text("Version") },
+                            text = { Text("Tree4Five Harness v1.0.0") },
+                            confirmButton = {
+                                Button(onClick = { showVersionDialog = false }) { Text("OK") }
+                            }
+                        )
+                    }
+
+                    if (showHelpDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showHelpDialog = false },
+                            title = { Text("Help") },
+                            text = { Text("Welcome to Tree4Five Harness.\n\nType a request in the input field to interact with the LLM agent. You can view logs, tools, and the agent's plan using the top bar buttons.") },
+                            confirmButton = {
+                                Button(onClick = { showHelpDialog = false }) { Text("OK") }
+                            }
+                        )
                     }
                 }
             )

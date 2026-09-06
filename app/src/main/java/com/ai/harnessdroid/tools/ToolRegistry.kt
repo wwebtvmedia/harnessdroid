@@ -76,7 +76,17 @@ open class ToolRegistry(
         val listIntentsTool = """
             {
                 "name": "list_harness_intents",
-                "description": "Lists all currently accessible harness tools/intents available on this Android device.",
+                "description": "Lists all currently accessible harness tools/intents and their providing package names available on this Android device.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        """.trimIndent()
+        val listInstalledAppsTool = """
+            {
+                "name": "list_installed_apps",
+                "description": "Lists all installed applications and tools on this Android device.",
                 "parameters": {
                     "type": "object",
                     "properties": {}
@@ -86,6 +96,7 @@ open class ToolRegistry(
         allSchemas.put(JSONObject(builtInAskHuman))
         allSchemas.put(JSONObject(listIntentsTool))
         allSchemas.put(JSONObject(osInfoTool))
+        allSchemas.put(JSONObject(listInstalledAppsTool))
 
         for (resolveInfo in resolveInfos ?: emptyList()) {
             val packageName = resolveInfo.serviceInfo.packageName
@@ -104,17 +115,19 @@ open class ToolRegistry(
                     put("method", "tools/list")
                 }
                 
-                val response = suspendCancellableCoroutine<JSONObject> { cont ->
-                    pendingRequests[id] = cont
-                    try {
-                        boundService.service.sendMcpMessage(request.toString())
-                    } catch (e: Exception) {
-                        pendingRequests.remove(id)
-                        cont.resumeWithException(e)
+                val response = kotlinx.coroutines.withTimeoutOrNull(5000) {
+                    suspendCancellableCoroutine<JSONObject> { cont ->
+                        pendingRequests[id] = cont
+                        try {
+                            boundService.service.sendMcpMessage(request.toString())
+                        } catch (e: Exception) {
+                            pendingRequests.remove(id)
+                            cont.resumeWithException(e)
+                        }
                     }
                 }
                 
-                if (response.has("result")) {
+                if (response != null && response.has("result")) {
                     val resultObj = response.getJSONObject("result")
                     if (resultObj.has("tools")) {
                         val toolsArray = resultObj.getJSONArray("tools")
@@ -196,8 +209,15 @@ open class ToolRegistry(
         }
 
         if (toolName == "list_harness_intents") {
-            val available = toolRoutingTable.keys.joinToString(", ")
-            return@withContext "{\"result\": \"Available intents: $available, ask_human_for_input, list_harness_intents, get_os_info\"}"
+            val available = toolRoutingTable.entries.joinToString(", ") { "${it.key} (${it.value})" }
+            return@withContext "{\"result\": \"Available intents and packages: $available. Built-in tools: ask_human_for_input, list_harness_intents, get_os_info, list_installed_apps\"}"
+        }
+
+        if (toolName == "list_installed_apps") {
+            val pm = context?.packageManager
+            val packages = pm?.getInstalledPackages(PackageManager.GET_META_DATA)
+            val apps = packages?.joinToString(", ") { it.packageName } ?: "None"
+            return@withContext "{\"result\": \"Installed packages: $apps\"}"
         }
 
         if (toolName == "ask_human_for_input") {

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    >
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- 
         SECURITY: In modern Android (API 30+), an app cannot blindly see other apps.
@@ -20,6 +20,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    
+    <!-- Used by the list_installed_apps tool -->
+    <uses-permission 
+        android:name="android.permission.QUERY_ALL_PACKAGES" 
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <permission
+        android:name="com.ai.harnessdroid.permission.BIND_TOOL_PROVIDER"
+        android:protectionLevel="signature" />
+
+    <uses-permission android:name="com.ai.harnessdroid.permission.BIND_TOOL_PROVIDER" />
 
     <application
         android:allowBackup="false"
@@ -49,7 +60,8 @@
 
         <service
             android:name=".tools.MockWebBrowserService"
-            android:exported="true">
+            android:exported="true"
+            android:permission="com.ai.harnessdroid.permission.BIND_TOOL_PROVIDER">
             <intent-filter>
                 <action android:name="com.ai.harnessdroid.ACTION_PROVIDE_TOOLS" />
             </intent-filter>
