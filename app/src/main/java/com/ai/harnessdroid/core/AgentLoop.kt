@@ -56,16 +56,16 @@ AVAILABLE TOOLS:
 $toolSummaryList
 
 RULES:
-- You must FIRST write your step-by-step plan inside a <PLAN> block.
-- THEN, to execute the first step of your plan, you MUST output exactly: harness have to use <tool_name>
-- If you have enough information to answer the user directly without a tool, output: NONE
+- You must write your step-by-step plan inside a <PLAN> block.
+- As the final line INSIDE your <PLAN> block, you MUST output exactly: harness have to use <tool_name>
+- If you have enough information to answer the user directly without a tool, output: NONE inside the <PLAN> block.
 
 EXAMPLE OUTPUT FORMAT:
 <PLAN>
 1. Call read_emails to get the data.
 2. Summarize the data for the user.
-</PLAN>
 harness have to use read_emails
+</PLAN>
 </SYSTEM>
 
 <CONVERSATION_HISTORY>
@@ -193,8 +193,8 @@ Do NOT output any other text or explanation.
             }
         }
 
-        // Check if NONE is the intended action (e.g. at the end of the output)
-        if (lowerOut.endsWith("none") || lowerOut == "none") {
+        // Check if NONE is the intended action (e.g. at the end of the output or before </plan>)
+        if (lowerOut.endsWith("none") || lowerOut == "none" || lowerOut.contains("none\n</plan>") || lowerOut.contains("\nnone\n") || lowerOut.contains("none</plan>")) {
             return "NONE"
         }
         
