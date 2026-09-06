@@ -57,19 +57,19 @@ class AgentLoopTest {
 class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm.LLMClient(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?) {
     private var state = 0
     override suspend fun generateText(prompt: String): String {
-        return if (prompt.contains("which tool do you choose to use next?")) {
+        return if (prompt.contains("define your step-by-step plan")) {
             if (infiniteTool) {
-                "harness have to use mockTool"
+                "<PLAN>Doing something</PLAN>\nharness have to use mockTool"
             } else {
                 if (state == 0) {
                     state = 1
                     if (prompt.contains("Goal: please list all tools accessible")) {
-                        "harness have to use list_harness_intents"
+                        "<PLAN>Listing tools</PLAN>\nharness have to use list_harness_intents"
                     } else {
-                        "harness have to use mockTool"
+                        "<PLAN>Mocking</PLAN>\nharness have to use mockTool"
                     }
                 } else {
-                    "NONE"
+                    "<PLAN>Done</PLAN>\nNONE"
                 }
             }
         } else if (prompt.contains("JSON object containing the arguments")) {
