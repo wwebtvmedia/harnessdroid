@@ -98,6 +98,36 @@ open class ToolRegistry(
         allSchemas.put(JSONObject(osInfoTool))
         allSchemas.put(JSONObject(listInstalledAppsTool))
 
+        // Dynamically add a tool for every installed app so the LLM can launch them natively
+        val pm = context?.packageManager
+        if (pm != null) {
+            val mainIntent = Intent(Intent.ACTION_MAIN, null)
+            mainIntent.addCategory(Intent.CATEGORY_LAUNCHER)
+            val launchables = pm.queryIntentActivities(mainIntent, 0)
+            
+            for (resolveInfo in launchables) {
+                val pkgName = resolveInfo.activityInfo.packageName
+                val appName = resolveInfo.loadLabel(pm).toString()
+                
+                val safeName = appName.replace(Regex("[^a-zA-Z0-9_]"), "_").lowercase()
+                // Limit the tool name length to keep it reasonable
+                val shortSafeName = if (safeName.length > 20) safeName.substring(0, 20) else safeName
+                val toolName = "launch_app_$shortSafeName"
+                
+                toolRoutingTable[toolName] = pkgName
+                
+                val appTool = JSONObject().apply {
+                    put("name", toolName)
+                    put("description", "Launch the $appName Android application ($pkgName).")
+                    put("parameters", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject())
+                    })
+                }
+                allSchemas.put(appTool)
+            }
+        }
+
         for (resolveInfo in resolveInfos ?: emptyList()) {
             val packageName = resolveInfo.serviceInfo.packageName
             val className = resolveInfo.serviceInfo.name
@@ -223,6 +253,25 @@ open class ToolRegistry(
         if (toolName == "ask_human_for_input") {
             val prompt = JSONObject(jsonArgs).optString("prompt", "User input required:")
             return@withContext interactionManager?.requestHumanInput(prompt) ?: ""
+        }
+
+        if (toolName.startsWith("launch_app_")) {
+            val pkgName = toolRoutingTable[toolName] ?: return@withContext "{\"error\": \"App package not found for $toolName\"}"
+            // Optional Security Guard
+            val isApproved = interactionManager?.requireIntentPermission(toolName, pkgName, "Launch app") ?: true
+            if (!isApproved) {
+                return@withContext "{\"error\": \"User denied permission to launch $pkgName.\"}"
+            }
+            
+            val pm = context?.packageManager
+            val launchIntent = pm?.getLaunchIntentForPackage(pkgName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context?.startActivity(launchIntent)
+                return@withContext "{\"result\": \"Successfully launched $pkgName\"}"
+            } else {
+                return@withContext "{\"error\": \"Could not launch $pkgName. Intent not found.\"}"
+            }
         }
 
         val packageName = toolRoutingTable[toolName] 
