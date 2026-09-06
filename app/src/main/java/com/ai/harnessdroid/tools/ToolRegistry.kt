@@ -98,33 +98,34 @@ open class ToolRegistry(
         allSchemas.put(JSONObject(osInfoTool))
         allSchemas.put(JSONObject(listInstalledAppsTool))
 
-        // Dynamically add a tool for every installed app so the LLM can launch them natively
+        // Create a single tool that lets the LLM launch any app by name, to avoid blowing up context window
         val pm = context?.packageManager
         if (pm != null) {
+            val launchAppTool = JSONObject().apply {
+                put("name", "launch_app")
+                put("description", "Launch any installed Android application by name (e.g. 'Gmail', 'Maps', 'YouTube').")
+                put("parameters", JSONObject().apply {
+                    put("type", "object")
+                    put("properties", JSONObject().apply {
+                        put("app_name", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The common name of the application to launch")
+                        })
+                    })
+                    put("required", org.json.JSONArray().put("app_name"))
+                })
+            }
+            allSchemas.put(launchAppTool)
+            
+            // Build a lookup table of appName -> packageName for executeTool
             val mainIntent = Intent(Intent.ACTION_MAIN, null)
             mainIntent.addCategory(Intent.CATEGORY_LAUNCHER)
             val launchables = pm.queryIntentActivities(mainIntent, 0)
             
             for (resolveInfo in launchables) {
                 val pkgName = resolveInfo.activityInfo.packageName
-                val appName = resolveInfo.loadLabel(pm).toString()
-                
-                val safeName = appName.replace(Regex("[^a-zA-Z0-9_]"), "_").lowercase()
-                // Limit the tool name length to keep it reasonable
-                val shortSafeName = if (safeName.length > 20) safeName.substring(0, 20) else safeName
-                val toolName = "launch_app_$shortSafeName"
-                
-                toolRoutingTable[toolName] = pkgName
-                
-                val appTool = JSONObject().apply {
-                    put("name", toolName)
-                    put("description", "Launch the $appName Android application ($pkgName).")
-                    put("parameters", JSONObject().apply {
-                        put("type", "object")
-                        put("properties", JSONObject())
-                    })
-                }
-                allSchemas.put(appTool)
+                val appName = resolveInfo.loadLabel(pm).toString().lowercase()
+                toolRoutingTable["app_pkg_$appName"] = pkgName
             }
         }
 
@@ -255,8 +256,22 @@ open class ToolRegistry(
             return@withContext interactionManager?.requestHumanInput(prompt) ?: ""
         }
 
-        if (toolName.startsWith("launch_app_")) {
-            val pkgName = toolRoutingTable[toolName] ?: return@withContext "{\"error\": \"App package not found for $toolName\"}"
+        if (toolName == "launch_app") {
+            val appName = JSONObject(jsonArgs).optString("app_name", "").lowercase()
+            
+            // Try an exact match first
+            var pkgName = toolRoutingTable["app_pkg_$appName"]
+            
+            // If exact match fails, try partial match (e.g. "gmail" matching "gmail app")
+            if (pkgName == null) {
+                val match = toolRoutingTable.keys.firstOrNull { it.startsWith("app_pkg_") && it.contains(appName) }
+                if (match != null) {
+                    pkgName = toolRoutingTable[match]
+                }
+            }
+            
+            if (pkgName == null) return@withContext "{\"error\": \"App '$appName' not found on device.\"}"
+            
             // Optional Security Guard
             val isApproved = interactionManager?.requireIntentPermission(toolName, pkgName, "Launch app") ?: true
             if (!isApproved) {
