@@ -41,6 +41,7 @@ class HarnessService : Service(), HumanInteractionHandler {
     private lateinit var agentLoop: AgentLoop
     private lateinit var forensicLogger: ForensicLogger
     private lateinit var sessionPersistence: SessionPersistence
+    private lateinit var toolRegistry: com.ai.harnessdroid.tools.ToolRegistry
 
     override fun onCreate() {
         super.onCreate()
@@ -59,7 +60,7 @@ class HarnessService : Service(), HumanInteractionHandler {
         
         val llmClient = com.ai.harnessdroid.llm.LLMClient(this)
         val interactionManager = InteractionManager(this)
-        val toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
+        toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
         
         sessionPersistence = SessionPersistence(this, "session_1")
         
@@ -77,6 +78,10 @@ class HarnessService : Service(), HumanInteractionHandler {
         scope.launch {
             sessionPersistence.clearLog()
         }
+    }
+
+    suspend fun getAvailableTools(): String {
+        return toolRegistry.discoverAndBindTools()
     }
 
     fun startTask(request: String) {

@@ -24,6 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import com.ai.harnessdroid.core.SessionEvent
 import com.ai.harnessdroid.core.HarnessService
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 
 class MainActivity : ComponentActivity() {
     private var harnessServiceState = mutableStateOf<HarnessService?>(null)
@@ -109,8 +113,18 @@ fun HarnessScreen(harnessService: HarnessService?) {
             TopAppBar(
                 title = { Text("Tree4Five Harness", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
                 actions = {
+                    var showToolsDialog by remember { mutableStateOf(false) }
+                    var toolsJson by remember { mutableStateOf("[]") }
+                    val scope = rememberCoroutineScope()
+
                     Button(onClick = { 
-                        harnessService?.startTask("please list all tools accessible")
+                        scope.launch {
+                            val tJson = harnessService?.getAvailableTools() ?: "[]"
+                            withContext(Dispatchers.Main) {
+                                toolsJson = tJson
+                                showToolsDialog = true
+                            }
+                        }
                     }, modifier = Modifier.padding(end = 4.dp)) {
                         Text("List Tools")
                     }
@@ -161,6 +175,10 @@ fun HarnessScreen(harnessService: HarnessService?) {
                                 Button(onClick = { showVersionDialog = false }) { Text("OK") }
                             }
                         )
+                    }
+
+                    if (showToolsDialog) {
+                        ToolsDialog(toolsJson = toolsJson, onDismiss = { showToolsDialog = false })
                     }
 
                     if (showHelpDialog) {
@@ -299,6 +317,43 @@ fun PermissionPopup(toolName: String, reason: String, onApprove: () -> Unit, onD
         },
         dismissButton = {
             OutlinedButton(onClick = onDeny) { Text("Deny") }
+        }
+    )
+}
+
+@Composable
+fun ToolsDialog(toolsJson: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Available Tools") },
+        text = {
+            LazyColumn {
+                val toolsArray = try {
+                    org.json.JSONArray(toolsJson)
+                } catch (e: Exception) {
+                    org.json.JSONArray()
+                }
+                
+                val count = toolsArray.length()
+                if (count == 0) {
+                    item { Text("No tools found.") }
+                } else {
+                    for (i in 0 until count) {
+                        val tool = toolsArray.getJSONObject(i)
+                        val name = tool.optString("name", "Unknown")
+                        val desc = tool.optString("description", "No description")
+                        item {
+                            Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                                Text(name, style = MaterialTheme.typography.titleMedium, color = Color(0xFF4CAF50))
+                                Text(desc, style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) { Text("Close") }
         }
     )
 }
