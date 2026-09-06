@@ -59,14 +59,14 @@ class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm
     override suspend fun generateText(prompt: String): String {
         return if (prompt.contains("which tool do you choose to use next?")) {
             if (infiniteTool) {
-                "mockTool"
+                "harness have to use mockTool"
             } else {
                 if (state == 0) {
                     state = 1
                     if (prompt.contains("Goal: please list all tools accessible")) {
-                        "list_harness_intents"
+                        "harness have to use list_harness_intents"
                     } else {
-                        "mockTool"
+                        "harness have to use mockTool"
                     }
                 } else {
                     "NONE"

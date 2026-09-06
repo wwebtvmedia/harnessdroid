@@ -49,41 +49,41 @@ class AgentLoop(
             val step1Prompt = """
 <SYSTEM>
 You are an AI Agent running on an Android device ($osInfo).
+The harness is able to call different services including providing the list of accessible tools.
 The user may speak to you in any language.
-Your ONLY way to act is by outputting a precise TOOL NAME.
 
 AVAILABLE TOOLS:
 $toolSummaryList
 
 RULES:
-- You MUST output EXACTLY ONE tool name from the list above.
+- To use a tool, you MUST output exactly the phrase: harness have to use <tool_name>
 - Do NOT output any other text, reasoning, or translation.
-- If the user wants to list tools, output: list_harness_intents
-- If the user asks about OS/device, output: get_os_info
+- If the user wants to list tools, output: harness have to use list_harness_intents
+- If the user asks about OS/device, output: harness have to use get_os_info
 - If you have enough information to answer the user directly without a tool, output: NONE
 
 EXAMPLES:
 <CONVERSATION_HISTORY>
 <USER_MSG>please list all tools accessible</USER_MSG>
 </CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output ONLY the tool name, or NONE.</INSTRUCTION>
+<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
 <OUTPUT>
-list_harness_intents
+harness have to use list_harness_intents
 </OUTPUT>
 
 <CONVERSATION_HISTORY>
 <USER_MSG>what os is this?</USER_MSG>
 </CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output ONLY the tool name, or NONE.</INSTRUCTION>
+<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
 <OUTPUT>
-get_os_info
+harness have to use get_os_info
 </OUTPUT>
 
 <CONVERSATION_HISTORY>
 <USER_MSG>what os is this?</USER_MSG>
 <TOOL_RESULT name="get_os_info">{"result": "Android API 34, Model: Pixel 7"}</TOOL_RESULT>
 </CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output ONLY the tool name, or NONE.</INSTRUCTION>
+<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
 <OUTPUT>
 NONE
 </OUTPUT>
@@ -95,7 +95,7 @@ $contextStr
 
 <INSTRUCTION>
 Based on the conversation history, which tool do you choose to use next?
-Output ONLY the tool name, or NONE.
+Output 'harness have to use <tool_name>', or NONE.
 </INSTRUCTION>
 
 <OUTPUT>
@@ -198,27 +198,32 @@ Do NOT output any other text or explanation.
     
     private fun extractToolName(llmOutput: String, toolsArray: JSONArray): String {
         val trimmed = llmOutput.trim()
-        
-        // 1. Exact match for tool names
-        for (i in 0 until toolsArray.length()) {
-            val name = toolsArray.getJSONObject(i).optString("name")
-            if (trimmed.equals(name, ignoreCase = true)) return name
-        }
-        
-        // 2. Exact match for NONE
-        if (trimmed.equals("NONE", ignoreCase = true)) return "NONE"
-        
-        val upperOut = trimmed.uppercase()
-        
-        // 3. If NONE is mentioned prominently (e.g. at the start or by itself)
-        if (upperOut.startsWith("NONE") || upperOut.contains("NONE")) {
+        val lowerOut = trimmed.lowercase()
+
+        // Exact match for NONE
+        if (lowerOut == "none") return "NONE"
+        if (lowerOut.startsWith("none") || lowerOut.contains("none")) {
             return "NONE"
         }
+
+        val triggerPhrase = "harness have to use"
+        if (lowerOut.contains(triggerPhrase)) {
+            val afterPhrase = lowerOut.substringAfter(triggerPhrase).trim()
+            // Find which tool name follows
+            for (i in 0 until toolsArray.length()) {
+                val name = toolsArray.getJSONObject(i).optString("name")
+                if (afterPhrase.startsWith(name.lowercase()) || afterPhrase.contains(name.lowercase())) {
+                    return name
+                }
+            }
+        }
         
-        // 4. Substring match for tool names
+        // Fallback: Check if they just outputted the tool name despite instructions
         for (i in 0 until toolsArray.length()) {
             val name = toolsArray.getJSONObject(i).optString("name")
-            if (trimmed.contains(name, ignoreCase = true)) return name
+            if (trimmed.equals(name, ignoreCase = true) || lowerOut.contains(name.lowercase())) {
+                return name
+            }
         }
         
         return "NONE" // Fallback guardrail
