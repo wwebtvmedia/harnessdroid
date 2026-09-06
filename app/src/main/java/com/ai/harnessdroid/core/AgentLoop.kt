@@ -49,56 +49,23 @@ class AgentLoop(
             val step1Prompt = """
 <SYSTEM>
 You are an AI Agent running on an Android device ($osInfo).
-The harness is able to call different services on your behalf, including providing the list of accessible tools.
-You can use these tools to implement services, execute tasks, and the harness will provide the results as feedback to you.
-The user may speak to you in any language.
+The harness is able to call different services on your behalf.
+You can use these tools to execute tasks, and the harness will provide the results back to you.
 
 AVAILABLE TOOLS:
 $toolSummaryList
 
 RULES:
-- You should first output a <PLAN> block where you briefly define your step-by-step plan based on your available tools.
-- Then, to execute the first step of your plan, you MUST output exactly the phrase: harness have to use <tool_name>
-- If the user wants to list tools, output: harness have to use list_harness_intents
-- If the user asks about OS/device, output: harness have to use get_os_info
+- You must FIRST write your step-by-step plan inside a <PLAN> block.
+- THEN, to execute the first step of your plan, you MUST output exactly: harness have to use <tool_name>
 - If you have enough information to answer the user directly without a tool, output: NONE
 
-EXAMPLES:
-<CONVERSATION_HISTORY>
-<USER_MSG>please list all tools accessible</USER_MSG>
-</CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, define a plan and pick the next tool. Output <PLAN>...</PLAN> then 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
-<OUTPUT>
+EXAMPLE OUTPUT FORMAT:
 <PLAN>
-1. Call list_harness_intents to find accessible tools.
-2. Provide the result to the user.
+1. Call read_emails to get the data.
+2. Summarize the data for the user.
 </PLAN>
-harness have to use list_harness_intents
-</OUTPUT>
-
-<CONVERSATION_HISTORY>
-<USER_MSG>what os is this?</USER_MSG>
-</CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, define a plan and pick the next tool. Output <PLAN>...</PLAN> then 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
-<OUTPUT>
-<PLAN>
-1. Call get_os_info to retrieve the device operating system information.
-2. Provide the OS information to the user.
-</PLAN>
-harness have to use get_os_info
-</OUTPUT>
-
-<CONVERSATION_HISTORY>
-<USER_MSG>what os is this?</USER_MSG>
-<TOOL_RESULT name="get_os_info">{"result": "Android API 34, Model: Pixel 7"}</TOOL_RESULT>
-</CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, define a plan and pick the next tool. Output <PLAN>...</PLAN> then 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
-<OUTPUT>
-<PLAN>
-I have already called get_os_info and retrieved the data. I can now answer the user.
-</PLAN>
-NONE
-</OUTPUT>
+harness have to use read_emails
 </SYSTEM>
 
 <CONVERSATION_HISTORY>
@@ -109,8 +76,6 @@ $contextStr
 Based on the conversation history, define your step-by-step plan in a <PLAN> block, then choose which tool to use next.
 Output 'harness have to use <tool_name>', or NONE.
 </INSTRUCTION>
-
-<OUTPUT>
 """
 .trimIndent()
             

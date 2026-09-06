@@ -19,7 +19,7 @@ class AgentLoopTest {
 
         val agentLoop = AgentLoop(mockLlmClient, mockToolRegistry, mockPersistence, logger)
         val result = agentLoop.runTask("Do something", maxTurns = 3)
-        
+        println("TEST RESULT: " + result)
         assertTrue(result.contains("Maximum turns reached"))
         assertEquals(3, mockToolRegistry.executionCount)
     }
@@ -57,7 +57,8 @@ class AgentLoopTest {
 class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm.LLMClient(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?) {
     private var state = 0
     override suspend fun generateText(prompt: String): String {
-        return if (prompt.contains("define your step-by-step plan")) {
+        println("MOCK LLM PROMPT: " + prompt)
+        return if (prompt.contains("choose which tool to use next")) {
             if (infiniteTool) {
                 "<PLAN>Doing something</PLAN>\nharness have to use mockTool"
             } else {
