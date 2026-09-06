@@ -49,7 +49,8 @@ class AgentLoop(
             val step1Prompt = """
 <SYSTEM>
 You are an AI Agent running on an Android device ($osInfo).
-The harness is able to call different services including providing the list of accessible tools.
+The harness is able to call different services on your behalf, including providing the list of accessible tools.
+You can use these tools to implement services, execute tasks, and the harness will provide the results as feedback to you.
 The user may speak to you in any language.
 
 AVAILABLE TOOLS:
@@ -114,9 +115,13 @@ Output 'harness have to use <tool_name>', or NONE.
                 // FSM STATE 1b: Final Answer Generation
                 val step1bPrompt = """
 <SYSTEM>
-You are an AI Agent. You have gathered information using tools.
-Review the CONVERSATION HISTORY below to see the results from your tools.
+You are an AI Agent running on an Android device ($osInfo).
+You have access to the following tools via the harness:
+$toolSummaryList
+
+Review the CONVERSATION HISTORY below to see the results from any tools you used.
 Synthesize these results and provide the final answer to the user in their preferred language.
+If the user asks about your tools or capabilities, list them based on the tools above.
 Do NOT talk about needing or not needing tools. Just answer the user directly.
 </SYSTEM>
 
@@ -125,7 +130,7 @@ $contextStr
 </CONVERSATION_HISTORY>
 
 <INSTRUCTION>
-Provide the final answer to the user based on the tool results above.
+Provide the final answer to the user based on the conversation and tool results above.
 </INSTRUCTION>
 
 <OUTPUT>
