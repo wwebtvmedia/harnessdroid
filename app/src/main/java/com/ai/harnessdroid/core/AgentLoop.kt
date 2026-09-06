@@ -62,9 +62,9 @@ RULES:
 
 EXAMPLE OUTPUT FORMAT:
 <PLAN>
-1. Call read_emails to get the data.
-2. Summarize the data for the user.
-harness have to use read_emails
+1. Call get_os_info to check the device version.
+2. Provide the OS information to the user.
+harness have to use get_os_info
 </PLAN>
 </SYSTEM>
 
