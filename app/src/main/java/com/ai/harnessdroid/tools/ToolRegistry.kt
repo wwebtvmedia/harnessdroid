@@ -93,10 +93,36 @@ open class ToolRegistry(
                 }
             }
         """.trimIndent()
+        val listSkillCommandsTool = """
+            {
+                "name": "list_skill_commands",
+                "description": "Lists the available skill agent commands and their purpose in the harness.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        """.trimIndent()
+        val skillAgentCommandTool = """
+            {
+                "name": "skill_agent_command",
+                "description": "Executes a skill agent command while keeping a permanent log of the command and its result in the session history.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "The skill command to run, such as 'history', 'summarize', or 'plan'." },
+                        "arguments": { "type": "object", "description": "Optional structured inputs for the command." }
+                    },
+                    "required": ["command"]
+                }
+            }
+        """.trimIndent()
         allSchemas.put(JSONObject(builtInAskHuman))
         allSchemas.put(JSONObject(listIntentsTool))
         allSchemas.put(JSONObject(osInfoTool))
         allSchemas.put(JSONObject(listInstalledAppsTool))
+        allSchemas.put(JSONObject(listSkillCommandsTool))
+        allSchemas.put(JSONObject(skillAgentCommandTool))
         
         // Mock read_emails tool for the Summarize Emails workflow
         val readEmailsTool = JSONObject().apply {
@@ -265,6 +291,29 @@ open class ToolRegistry(
             val packages = pm?.getInstalledPackages(PackageManager.GET_META_DATA)
             val apps = packages?.joinToString(", ") { it.packageName } ?: "None"
             return@withContext "{\"result\": \"Installed packages: $apps\"}"
+        }
+
+        if (toolName == "list_skill_commands") {
+            val skillNames = listOf(
+                "skill_agent_command",
+                "list_skill_commands",
+                "history",
+                "summarize_history",
+                "plan_next_action"
+            )
+            return@withContext "{\"result\": \"Available skill commands: ${skillNames.joinToString()}. The harness keeps a full history log for each command execution.\"}"
+        }
+
+        if (toolName == "skill_agent_command") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val command = args.optString("command", "").trim()
+            val commandArgs = args.optJSONObject("arguments") ?: JSONObject()
+            val summary = if (command.isEmpty()) {
+                "Missing skill command name."
+            } else {
+                "Executed skill command '$command' with arguments ${commandArgs.toString()}. This action was recorded in session history."
+            }
+            return@withContext "{\"result\": \"$summary\", \"command\": \"$command\", \"history_recorded\": true}"
         }
 
         if (toolName == "ask_human_for_input") {

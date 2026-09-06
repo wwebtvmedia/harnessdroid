@@ -32,12 +32,14 @@ import kotlinx.coroutines.GlobalScope
 class MainActivity : ComponentActivity() {
     private var harnessServiceState = mutableStateOf<HarnessService?>(null)
     private var isBound = false
+    private var pendingPrompt: String? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
             val binder = service as HarnessService.LocalBinder
             harnessServiceState.value = binder.getService()
             isBound = true
+            maybeRunPendingTask()
         }
         override fun onServiceDisconnected(arg0: ComponentName) {
             harnessServiceState.value = null
@@ -45,9 +47,32 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun maybeRunPendingTask() {
+        val prompt = pendingPrompt ?: return
+        harnessServiceState.value?.startTask(prompt)
+        pendingPrompt = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
+        val incomingPrompt = intent?.getStringExtra("prompt") ?: intent?.getStringExtra(Intent.EXTRA_TEXT)
+        val customUrl = intent?.getStringExtra("custom_url")
+        val customApiKey = intent?.getStringExtra("custom_api_key")
+        val customApiType = intent?.getStringExtra("custom_api_type")
+
+        if (!incomingPrompt.isNullOrBlank()) {
+            pendingPrompt = incomingPrompt
+        }
+
+        if (!customUrl.isNullOrBlank() || !customApiKey.isNullOrBlank() || !customApiType.isNullOrBlank()) {
+            val configManager = com.ai.harnessdroid.llm.LLMConfigManager(this)
+            configManager.useTree4Five = false
+            if (!customUrl.isNullOrBlank()) configManager.customUrl = customUrl
+            if (!customApiKey.isNullOrBlank()) configManager.customApiKey = customApiKey
+            if (!customApiType.isNullOrBlank()) configManager.customApiType = customApiType
+        }
+
         Intent(this, HarnessService::class.java).also { intent ->
             bindService(intent, connection, Context.BIND_AUTO_CREATE)
             startService(intent)
