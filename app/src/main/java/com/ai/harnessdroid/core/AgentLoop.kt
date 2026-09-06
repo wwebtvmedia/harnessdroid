@@ -73,8 +73,9 @@ $contextStr
 </CONVERSATION_HISTORY>
 
 <INSTRUCTION>
-Based on the conversation history, define your step-by-step plan in a <PLAN> block, then choose which tool to use next.
-Output 'harness have to use <tool_name>', or NONE.
+Based on the conversation history, define your step-by-step plan in a <PLAN> block.
+Then answer: which tool do you choose to use next?
+Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
 </INSTRUCTION>
 """
 .trimIndent()
@@ -198,10 +199,10 @@ Do NOT output any other text or explanation.
             return "NONE"
         }
         
-        // Fallback: Check if they just outputted the tool name despite instructions
+        // Fallback: Check if they mentioned the tool name ANYWHERE in the output despite instructions
         for (i in 0 until toolsArray.length()) {
             val name = toolsArray.getJSONObject(i).optString("name")
-            if (trimmed.equals(name, ignoreCase = true) || lowerOut.endsWith(name.lowercase())) {
+            if (lowerOut.contains(name.lowercase())) {
                 return name
             }
         }

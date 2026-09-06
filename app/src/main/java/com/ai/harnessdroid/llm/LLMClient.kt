@@ -19,6 +19,31 @@ open class LLMClient(private val context: Context?) {
     private var isBound = false
     private val TAG = "LLMClient"
 
+    internal fun resolveCustomUrl(rawUrl: String, apiType: String = "OpenAI"): String {
+        val trimmed = rawUrl.trim()
+        if (trimmed.isEmpty()) return trimmed
+
+        val normalized = when {
+            trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+            trimmed.startsWith("//", ignoreCase = true) -> "http:$trimmed"
+            else -> "http://$trimmed"
+        }
+
+        return try {
+            val uri = java.net.URI(normalized)
+            val hasPath = !uri.path.isNullOrBlank()
+            if (hasPath) {
+                normalized
+            } else if (apiType.equals("OpenAI", ignoreCase = true)) {
+                "$normalized/v1/chat/completions"
+            } else {
+                normalized
+            }
+        } catch (_: Exception) {
+            normalized
+        }
+    }
+
     private suspend fun getService(): ILLMService = suspendCancellableCoroutine { continuation ->
         if (llmService != null) {
             continuation.resume(llmService!!)
@@ -65,7 +90,12 @@ open class LLMClient(private val context: Context?) {
         if (config != null && !config.useTree4Five) {
             // Use Custom HTTP LLM Provider
             try {
-                val url = java.net.URL(config.customUrl)
+                val normalizedUrl = resolveCustomUrl(config.customUrl, config.customApiType)
+                if (normalizedUrl.isBlank()) {
+                    return@withContext "Error: Custom LLM URL is empty"
+                }
+
+                val url = java.net.URL(normalizedUrl)
                 val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json")
