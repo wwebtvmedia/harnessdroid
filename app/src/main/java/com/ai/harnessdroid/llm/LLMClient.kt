@@ -61,27 +61,70 @@ open class LLMClient(private val context: Context?) {
     }
 
     open suspend fun generateText(prompt: String): String = withContext(Dispatchers.IO) {
-        val service = getService()
-        suspendCancellableCoroutine { continuation ->
-            // Strongly reference the callback so it isn't garbage collected!
-            val callback = object : ILLMCallback.Stub() {
-                override fun onTokenReceived(token: String) {}
-                override fun onGenerationComplete(fullText: String) {
-                    if (continuation.isActive) {
-                        continuation.resume(fullText)
-                    }
-                }
-            }
+        val config = context?.let { LLMConfigManager(it) }
+        if (config != null && !config.useTree4Five) {
+            // Use Custom HTTP LLM Provider
             try {
-                service.generateTextStream(prompt, callback)
-                
-                // Keep the strong reference alive for the duration of the suspend call
-                continuation.invokeOnCancellation {
-                    val keepAlive = callback
+                val url = java.net.URL(config.customUrl)
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json")
+                if (config.customApiKey.isNotEmpty()) {
+                    connection.setRequestProperty("Authorization", "Bearer ${config.customApiKey}")
+                }
+                connection.doOutput = true
+
+                // Simple JSON payload structure, could vary by API Type
+                val payload = org.json.JSONObject().apply {
+                    put("model", "custom-model")
+                    put("messages", org.json.JSONArray().apply {
+                        put(org.json.JSONObject().apply {
+                            put("role", "user")
+                            put("content", prompt)
+                        })
+                    })
+                }
+
+                connection.outputStream.use { os ->
+                    val input = payload.toString().toByteArray(Charsets.UTF_8)
+                    os.write(input, 0, input.size)
+                }
+
+                val responseCode = connection.responseCode
+                if (responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonResponse = org.json.JSONObject(response)
+                    return@withContext jsonResponse.optJSONArray("choices")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("message")
+                        ?.optString("content", "") ?: response
+                } else {
+                    return@withContext "Error: Custom LLM API returned HTTP $responseCode"
                 }
             } catch (e: Exception) {
-                if (continuation.isActive) {
-                    continuation.resumeWithException(e)
+                return@withContext "Error connecting to Custom LLM: ${e.message}"
+            }
+        } else {
+            // Use local Tree4Five Service
+            val service = getService()
+            suspendCancellableCoroutine { continuation ->
+                val callback = object : ILLMCallback.Stub() {
+                    override fun onTokenReceived(token: String) {}
+                    override fun onGenerationComplete(fullText: String) {
+                        if (continuation.isActive) {
+                            continuation.resume(fullText)
+                        }
+                    }
+                }
+                try {
+                    service.generateTextStream(prompt, callback)
+                    continuation.invokeOnCancellation {
+                        val keepAlive = callback
+                    }
+                } catch (e: Exception) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(e)
+                    }
                 }
             }
         }

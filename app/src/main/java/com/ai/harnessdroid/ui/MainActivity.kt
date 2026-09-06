@@ -141,6 +141,7 @@ fun HarnessScreen(harnessService: HarnessService?) {
                     var showMenu by remember { mutableStateOf(false) }
                     var showVersionDialog by remember { mutableStateOf(false) }
                     var showHelpDialog by remember { mutableStateOf(false) }
+                    var showLLMConfigDialog by remember { mutableStateOf(false) }
 
                     IconButton(onClick = { showMenu = true }) {
                         Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu")
@@ -164,6 +165,13 @@ fun HarnessScreen(harnessService: HarnessService?) {
                                 showVersionDialog = true
                             }
                         )
+                        DropdownMenuItem(
+                            text = { Text("LLM Configuration") },
+                            onClick = { 
+                                showMenu = false
+                                showLLMConfigDialog = true
+                            }
+                        )
                     }
 
                     if (showVersionDialog) {
@@ -174,6 +182,13 @@ fun HarnessScreen(harnessService: HarnessService?) {
                             confirmButton = {
                                 Button(onClick = { showVersionDialog = false }) { Text("OK") }
                             }
+                        )
+                    }
+
+                    if (showLLMConfigDialog) {
+                        LLMConfigDialog(
+                            context = androidx.compose.ui.platform.LocalContext.current,
+                            onDismiss = { showLLMConfigDialog = false }
                         )
                     }
 
@@ -354,6 +369,79 @@ fun ToolsDialog(toolsJson: String, onDismiss: () -> Unit) {
         },
         confirmButton = {
             Button(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
+fun LLMConfigDialog(
+    context: Context,
+    onDismiss: () -> Unit
+) {
+    val configManager = remember { com.ai.harnessdroid.llm.LLMConfigManager(context) }
+    var useTree4Five by remember { mutableStateOf(configManager.useTree4Five) }
+    var customUrl by remember { mutableStateOf(configManager.customUrl) }
+    var customApiKey by remember { mutableStateOf(configManager.customApiKey) }
+    var customApiType by remember { mutableStateOf(configManager.customApiType) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("LLM Configuration") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = useTree4Five,
+                        onClick = { useTree4Five = true }
+                    )
+                    Text("Tree4Five LLMProvider (Default)")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = !useTree4Five,
+                        onClick = { useTree4Five = false }
+                    )
+                    Text("Custom LLM")
+                }
+                
+                if (!useTree4Five) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = customUrl,
+                        onValueChange = { customUrl = it },
+                        label = { Text("API URL") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = customApiKey,
+                        onValueChange = { customApiKey = it },
+                        label = { Text("API Key") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = customApiType,
+                        onValueChange = { customApiType = it },
+                        label = { Text("API Type (OpenAI, Gemini, etc.)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                configManager.useTree4Five = useTree4Five
+                configManager.customUrl = customUrl
+                configManager.customApiKey = customApiKey
+                configManager.customApiType = customApiType
+                onDismiss()
+            }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
