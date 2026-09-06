@@ -57,8 +57,8 @@ AVAILABLE TOOLS:
 $toolSummaryList
 
 RULES:
-- To use a tool, you MUST output exactly the phrase: harness have to use <tool_name>
-- Do NOT output any other text, reasoning, or translation.
+- You should first output a <PLAN> block where you briefly define your step-by-step plan based on your available tools.
+- Then, to execute the first step of your plan, you MUST output exactly the phrase: harness have to use <tool_name>
 - If the user wants to list tools, output: harness have to use list_harness_intents
 - If the user asks about OS/device, output: harness have to use get_os_info
 - If you have enough information to answer the user directly without a tool, output: NONE
@@ -67,16 +67,24 @@ EXAMPLES:
 <CONVERSATION_HISTORY>
 <USER_MSG>please list all tools accessible</USER_MSG>
 </CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
+<INSTRUCTION>Based on the conversation history, define a plan and pick the next tool. Output <PLAN>...</PLAN> then 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
 <OUTPUT>
+<PLAN>
+1. Call list_harness_intents to find accessible tools.
+2. Provide the result to the user.
+</PLAN>
 harness have to use list_harness_intents
 </OUTPUT>
 
 <CONVERSATION_HISTORY>
 <USER_MSG>what os is this?</USER_MSG>
 </CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
+<INSTRUCTION>Based on the conversation history, define a plan and pick the next tool. Output <PLAN>...</PLAN> then 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
 <OUTPUT>
+<PLAN>
+1. Call get_os_info to retrieve the device operating system information.
+2. Provide the OS information to the user.
+</PLAN>
 harness have to use get_os_info
 </OUTPUT>
 
@@ -84,8 +92,11 @@ harness have to use get_os_info
 <USER_MSG>what os is this?</USER_MSG>
 <TOOL_RESULT name="get_os_info">{"result": "Android API 34, Model: Pixel 7"}</TOOL_RESULT>
 </CONVERSATION_HISTORY>
-<INSTRUCTION>Based on the conversation history, which tool do you choose to use next? Output 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
+<INSTRUCTION>Based on the conversation history, define a plan and pick the next tool. Output <PLAN>...</PLAN> then 'harness have to use <tool_name>', or NONE.</INSTRUCTION>
 <OUTPUT>
+<PLAN>
+I have already called get_os_info and retrieved the data. I can now answer the user.
+</PLAN>
 NONE
 </OUTPUT>
 </SYSTEM>
@@ -95,7 +106,7 @@ $contextStr
 </CONVERSATION_HISTORY>
 
 <INSTRUCTION>
-Based on the conversation history, which tool do you choose to use next?
+Based on the conversation history, define your step-by-step plan in a <PLAN> block, then choose which tool to use next.
 Output 'harness have to use <tool_name>', or NONE.
 </INSTRUCTION>
 
@@ -205,15 +216,9 @@ Do NOT output any other text or explanation.
         val trimmed = llmOutput.trim()
         val lowerOut = trimmed.lowercase()
 
-        // Exact match for NONE
-        if (lowerOut == "none") return "NONE"
-        if (lowerOut.startsWith("none") || lowerOut.contains("none")) {
-            return "NONE"
-        }
-
         val triggerPhrase = "harness have to use"
         if (lowerOut.contains(triggerPhrase)) {
-            val afterPhrase = lowerOut.substringAfter(triggerPhrase).trim()
+            val afterPhrase = lowerOut.substringAfterLast(triggerPhrase).trim()
             // Find which tool name follows
             for (i in 0 until toolsArray.length()) {
                 val name = toolsArray.getJSONObject(i).optString("name")
@@ -222,11 +227,16 @@ Do NOT output any other text or explanation.
                 }
             }
         }
+
+        // Check if NONE is the intended action (e.g. at the end of the output)
+        if (lowerOut.endsWith("none") || lowerOut == "none") {
+            return "NONE"
+        }
         
         // Fallback: Check if they just outputted the tool name despite instructions
         for (i in 0 until toolsArray.length()) {
             val name = toolsArray.getJSONObject(i).optString("name")
-            if (trimmed.equals(name, ignoreCase = true) || lowerOut.contains(name.lowercase())) {
+            if (trimmed.equals(name, ignoreCase = true) || lowerOut.endsWith(name.lowercase())) {
                 return name
             }
         }

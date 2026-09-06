@@ -97,6 +97,22 @@ open class ToolRegistry(
         allSchemas.put(JSONObject(listIntentsTool))
         allSchemas.put(JSONObject(osInfoTool))
         allSchemas.put(JSONObject(listInstalledAppsTool))
+        
+        // Mock read_emails tool for the Summarize Emails workflow
+        val readEmailsTool = JSONObject().apply {
+            put("name", "read_emails")
+            put("description", "Reads the latest unread emails from the user's inbox.")
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("count", JSONObject().apply {
+                        put("type", "integer")
+                        put("description", "Number of emails to read (default: 5)")
+                    })
+                })
+            })
+        }
+        allSchemas.put(readEmailsTool)
 
         // Create a single tool that lets the LLM launch any app by name, to avoid blowing up context window
         val pm = context?.packageManager
@@ -252,8 +268,36 @@ open class ToolRegistry(
         }
 
         if (toolName == "ask_human_for_input") {
-            val prompt = JSONObject(jsonArgs).optString("prompt", "User input required:")
+            val prompt = JSONObject(jsonArgs).optString("prompt", "Please provide input:")
             return@withContext interactionManager?.requestHumanInput(prompt) ?: ""
+        }
+
+        if (toolName == "read_emails") {
+            val count = JSONObject(jsonArgs).optInt("count", 3)
+            val emails = JSONArray()
+            emails.put(JSONObject().apply {
+                put("from", "boss@company.com")
+                put("subject", "URGENT: Q3 Report")
+                put("body", "I need the Q3 report by 5 PM today. Please make sure the graphs are updated.")
+            })
+            emails.put(JSONObject().apply {
+                put("from", "newsletter@techcrunch.com")
+                put("subject", "AI Agent breakthrough")
+                put("body", "DeepMind researchers just announced a new AI agent framework...")
+            })
+            emails.put(JSONObject().apply {
+                put("from", "mom@family.com")
+                put("subject", "Dinner tonight?")
+                put("body", "Are you still coming over for dinner? I am making lasagna.")
+            })
+            
+            // Return only up to 'count' emails
+            val result = JSONArray()
+            for (i in 0 until minOf(count, emails.length())) {
+                result.put(emails.getJSONObject(i))
+            }
+            
+            return@withContext "{\"result\": \"Successfully read emails\", \"emails\": $result}"
         }
 
         if (toolName == "launch_app") {
