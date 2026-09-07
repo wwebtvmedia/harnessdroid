@@ -23,6 +23,10 @@ class AgentLoop(
 ) {
     private val TAG = "AgentLoop"
     private var sessionLog = mutableListOf<SessionEvent>()
+    // Compression and mitigation configuration (can be toggled via env vars)
+    private val MAX_CONTEXT_CHARS = (System.getenv("HARNESS_MAX_CONTEXT_CHARS") ?: "3000").toInt()
+    private val COMPRESSION_STRATEGY = System.getenv("HARNESS_COMPRESSION_STRATEGY") ?: "ach" // options: single, ach
+    private val USE_MOCK_LLM = (System.getenv("HARNESS_USE_MOCK_LLM") ?: "0") == "1"
 
     suspend fun runTask(taskInstruction: String, maxTurns: Int = 10): String = withContext(Dispatchers.IO) {
         forensicLogger.logEvent("LOOP_INIT", "Discovering tools...")
@@ -84,21 +88,18 @@ class AgentLoop(
             
             // FSM STATE 1: Intent & Tool Selection
             var contextStr = buildContextString(sessionLog)
-            // If the context is growing large, ask the LLM to compress it into a concise summary
-            val MAX_CONTEXT_CHARS = 3000
+            // If the context is growing large, compress it using configured strategy
             if (contextStr.length > MAX_CONTEXT_CHARS) {
-                forensicLogger.logEvent("CONTEXT_COMPRESSION_START", "Context length ${contextStr.length}, requesting compression from LLM.")
-                val compressionPrompt = """
-<SYSTEM>
-You are an assistant tasked with compressing a conversation history for an autonomous agent. Produce a short concise summary (max 600 characters) that preserves important facts, tool outputs, and unresolved user goals. Output only the compressed summary.
-</SYSTEM>
-
-<CONVERSATION_HISTORY>
-$contextStr
-</CONVERSATION_HISTORY>
-""".trimIndent()
-                val compressed = try { llmClient.generateText(compressionPrompt).trim() } catch (e: Exception) { contextStr }
-                forensicLogger.logEvent("CONTEXT_COMPRESSION_RESULT", "Compressed length ${compressed.length}")
+                forensicLogger.logEvent("CONTEXT_COMPRESSION_START", "Context length ${contextStr.length}, strategy=$COMPRESSION_STRATEGY")
+                val startMs = System.currentTimeMillis()
+                val compressed = try {
+                    performCompression(contextStr)
+                } catch (e: Exception) {
+                    forensicLogger.logEvent("CONTEXT_COMPRESSION_ERROR", "Compression failed: ${e.message}")
+                    contextStr
+                }
+                val elapsed = System.currentTimeMillis() - startMs
+                forensicLogger.logEvent("CONTEXT_COMPRESSION_RESULT", "Compressed length ${compressed.length}, elapsed_ms=$elapsed")
                 contextStr = "<COMPRESSED_HISTORY>\n$compressed\n</COMPRESSED_HISTORY>"
                 // record the compression action
                 sessionLog.add(SessionEvent("system", "CompressedConversationSummary: $compressed"))
@@ -332,6 +333,100 @@ Do NOT output any other text or explanation.
             }
         }
         return builder.toString()
+    }
+
+    // Top-level compression dispatcher
+    private suspend fun performCompression(contextStr: String): String = withContext(Dispatchers.IO) {
+        if (USE_MOCK_LLM) {
+            forensicLogger.logEvent("CONTEXT_COMPRESSION_MODE", "Using MOCK LLM compression (fast)")
+            return@withContext performMockCompression(contextStr)
+        }
+
+        return@withContext when (COMPRESSION_STRATEGY.lowercase()) {
+            "ach" -> performACHCompression(contextStr)
+            else -> performSingleCompression(contextStr)
+        }
+    }
+
+    // Original single-call compression
+    private suspend fun performSingleCompression(contextStr: String): String = withContext(Dispatchers.IO) {
+        val compressionPrompt = """
+<SYSTEM>
+You are an assistant tasked with compressing a conversation history for an autonomous agent. Produce a short concise summary (max 600 characters) that preserves important facts, tool outputs, and unresolved user goals. Output only the compressed summary.
+</SYSTEM>
+
+<CONVERSATION_HISTORY>
+$contextStr
+</CONVERSATION_HISTORY>
+""".trimIndent()
+        return@withContext try {
+            llmClient.generateText(compressionPrompt).trim()
+        } catch (e: Exception) {
+            contextStr
+        }
+    }
+
+    // Adaptive Chunked History (ACH) compression: split context into chunks, summarize each, then summarize the summaries
+    private suspend fun performACHCompression(contextStr: String): String = withContext(Dispatchers.IO) {
+        val chunkSize = 2000
+        val summaries = mutableListOf<String>()
+        var start = 0
+        var idx = 0
+        while (start < contextStr.length) {
+            val end = kotlin.math.min(start + chunkSize, contextStr.length)
+            val chunk = contextStr.substring(start, end)
+            val chunkPrompt = """
+<SYSTEM>
+Compress the following conversation chunk into a short summary (max 300 characters) preserving facts and tool outputs. Output only the summary.
+</SYSTEM>
+
+<CHUNK>
+$chunk
+</CHUNK>
+""".trimIndent()
+            forensicLogger.logEvent("ACH_CHUNK_SUMMARY_START", "chunk=$idx start=$start end=$end")
+            val chunkSummary = try {
+                llmClient.generateText(chunkPrompt).trim()
+            } catch (e: Exception) {
+                chunk.take(300)
+            }
+            forensicLogger.logEvent("ACH_CHUNK_SUMMARY_DONE", "chunk=$idx len=${chunkSummary.length}")
+            summaries.add(chunkSummary)
+            idx++
+            start = end
+        }
+
+        // Combine summaries and compress once more
+        val combined = summaries.joinToString(separator = "\n")
+        val finalPrompt = """
+<SYSTEM>
+You are an assistant tasked with producing a concise combined summary (max 600 characters) from the list of chunk summaries below. Preserve key facts and unresolved goals. Output only the final summary.
+</SYSTEM>
+
+<CHUNK_SUMMARIES>
+$combined
+</CHUNK_SUMMARIES>
+""".trimIndent()
+        return@withContext try {
+            llmClient.generateText(finalPrompt).trim()
+        } catch (e: Exception) {
+            // fallback: join chunk summaries truncated
+            combined.take(600)
+        }
+    }
+
+    // Very fast mock compression used for CI/remote testing to avoid heavy LLM runs
+    private fun performMockCompression(contextStr: String): String {
+        // Prefer extracting recent assistant/tool messages and then truncate
+        val marker = "</TOOL_RESULT>"
+        val idx = contextStr.lastIndexOf(marker)
+        val snippet = if (idx != -1 && idx + marker.length < contextStr.length) {
+            contextStr.substring(idx + marker.length)
+        } else {
+            contextStr.takeLast(800)
+        }
+        // collapse whitespace and truncate
+        return snippet.replace(Regex("\\s+"), " ").trim().take(600)
     }
 
     private fun cleanJson(response: String): String {
