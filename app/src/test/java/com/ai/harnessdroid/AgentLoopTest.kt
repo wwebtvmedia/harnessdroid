@@ -57,7 +57,8 @@ class AgentLoopTest {
 class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm.LLMClient(null as android.content.Context?) {
     private var state = 0
     override suspend fun generateText(prompt: String): String {
-        return if (prompt.contains("which tool do you choose to use next?")) {
+        val lower = prompt.lowercase()
+        return if (lower.contains("available tools") || lower.contains("<plan") || lower.contains("which tool") || lower.contains("choose") || lower.contains("pick a tool")) {
             if (infiniteTool) {
                 "mockTool"
             } else {
@@ -72,11 +73,11 @@ class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm
                     "NONE"
                 }
             }
-        } else if (prompt.contains("JSON object containing the arguments")) {
+        } else if (lower.contains("json") && lower.contains("arguments")) {
             "{ \"testArg\": \"val\" }"
         } else {
             // FSM STATE 1b: Final Answer Generation
-            if (prompt.contains("Goal: please list all tools accessible")) {
+            if (lower.contains("goal: please list all tools accessible") || lower.contains("please list all tools accessible")) {
                 "Available intents: mockTool, list_harness_intents"
             } else {
                 "Final Answer"

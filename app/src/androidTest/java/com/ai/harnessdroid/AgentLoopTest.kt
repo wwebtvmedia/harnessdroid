@@ -58,13 +58,14 @@ class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm
     private var state = 0
     override suspend fun generateText(prompt: String): String {
         println("MOCK LLM PROMPT: " + prompt)
-        return if (prompt.contains("choose which tool to use next")) {
+        val lower = prompt.lowercase()
+        return if (lower.contains("available tools") || lower.contains("<plan") || lower.contains("which tool") || lower.contains("choose") || lower.contains("pick a tool")) {
             if (infiniteTool) {
                 "<PLAN>Doing something</PLAN>\nharness have to use mockTool"
             } else {
                 if (state == 0) {
                     state = 1
-                    if (prompt.contains("Goal: please list all tools accessible")) {
+                    if (lower.contains("goal: please list all tools accessible") || lower.contains("please list all tools accessible")) {
                         "<PLAN>Listing tools</PLAN>\nharness have to use list_harness_intents"
                     } else {
                         "<PLAN>Mocking</PLAN>\nharness have to use mockTool"
@@ -73,11 +74,11 @@ class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm
                     "<PLAN>Done</PLAN>\nNONE"
                 }
             }
-        } else if (prompt.contains("JSON object containing the arguments")) {
+        } else if (lower.contains("json") && lower.contains("arguments")) {
             "{ \"testArg\": \"val\" }"
         } else {
             // FSM STATE 1b: Final Answer Generation
-            if (prompt.contains("Goal: please list all tools accessible")) {
+            if (lower.contains("goal: please list all tools accessible") || lower.contains("please list all tools accessible")) {
                 "Available intents: mockTool, list_harness_intents"
             } else {
                 "Final Answer"
