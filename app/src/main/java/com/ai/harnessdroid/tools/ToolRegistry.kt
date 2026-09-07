@@ -459,4 +459,9 @@ open class ToolRegistry(
         boundServices.clear()
         toolRoutingTable.clear()
     }
+
+    // Expose a small helper so consumers (like AgentLoop) can request human input
+    open suspend fun requestHumanInput(prompt: String): String? {
+        return interactionManager?.requestHumanInput(prompt)
+    }
 }

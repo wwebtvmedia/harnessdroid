@@ -32,6 +32,45 @@ class AgentLoop(
         // Harness simplifies the schema for the tiny LLM
         val toolSummaryList = buildToolSummary(toolsArray)
 
+        // --- NEW: Ask LLM a short pre-query to suggest a preferred tool name/phrase ---
+        forensicLogger.logEvent("PRE_QUERY_START", "Asking LLM for preferred tool name for task.")
+        val preQueryPrompt = """
+    <SYSTEM>
+    You are an AI assistant. Based ONLY on the user's task instruction below, reply with a single short tool name or short phrase (1-3 words) that would best handle this task on an Android harness. If no tool is needed, reply with NONE. Reply with no extra text.
+    </SYSTEM>
+
+    <TASK>
+    $taskInstruction
+    </TASK>
+    """.trimIndent()
+
+        var preferredToolRaw = try { llmClient.generateText(preQueryPrompt).trim() } catch (e: Exception) { "" }
+        forensicLogger.logEvent("PRE_QUERY_RESPONSE", "LLM pre-query replied: $preferredToolRaw")
+
+        // Optionally ask the LLM a general clarifying question to optimize context
+        forensicLogger.logEvent("GENERAL_QUESTION_START", "Asking LLM if a clarifying question is needed.")
+        val generalQuestionPrompt = """
+    <SYSTEM>
+    You are an AI assistant. Given the task below, if you need a short clarifying question to pick the best tool, output that question only. If no clarification is needed, output NO_QUESTION.
+    </SYSTEM>
+
+    <TASK>
+    $taskInstruction
+    </TASK>
+    """.trimIndent()
+
+        val generalQuestionResponse: String = try { llmClient.generateText(generalQuestionPrompt).trim() } catch (e: Exception) { "NO_QUESTION" }
+        forensicLogger.logEvent("GENERAL_QUESTION_RESPONSE", "LLM asked: $generalQuestionResponse")
+        if (!generalQuestionResponse.equals("NO_QUESTION", ignoreCase = true) && generalQuestionResponse.isNotBlank()) {
+            // Ask human for clarification via ToolRegistry helper (if available)
+            val humanReply = try { toolRegistry.requestHumanInput(generalQuestionResponse) ?: "" } catch (e: Exception) { "" }
+            forensicLogger.logEvent("HUMAN_CLARIFICATION", "Human replied: $humanReply")
+            if (humanReply.isNotBlank()) {
+                sessionLog.add(SessionEvent("user", humanReply))
+                sessionPersistence.flushLog(sessionLog)
+            }
+        }
+
         sessionLog = sessionPersistence.loadLog()
         sessionLog.add(SessionEvent("system", "Goal: $taskInstruction"))
         sessionPersistence.flushLog(sessionLog)
@@ -44,8 +83,36 @@ class AgentLoop(
             forensicLogger.logEvent("TURN_START", "Starting turn $turns")
             
             // FSM STATE 1: Intent & Tool Selection
-            val contextStr = buildContextString(sessionLog)
+            var contextStr = buildContextString(sessionLog)
+            // If the context is growing large, ask the LLM to compress it into a concise summary
+            val MAX_CONTEXT_CHARS = 3000
+            if (contextStr.length > MAX_CONTEXT_CHARS) {
+                forensicLogger.logEvent("CONTEXT_COMPRESSION_START", "Context length ${contextStr.length}, requesting compression from LLM.")
+                val compressionPrompt = """
+<SYSTEM>
+You are an assistant tasked with compressing a conversation history for an autonomous agent. Produce a short concise summary (max 600 characters) that preserves important facts, tool outputs, and unresolved user goals. Output only the compressed summary.
+</SYSTEM>
+
+<CONVERSATION_HISTORY>
+$contextStr
+</CONVERSATION_HISTORY>
+""".trimIndent()
+                val compressed = try { llmClient.generateText(compressionPrompt).trim() } catch (e: Exception) { contextStr }
+                forensicLogger.logEvent("CONTEXT_COMPRESSION_RESULT", "Compressed length ${compressed.length}")
+                contextStr = "<COMPRESSED_HISTORY>\n$compressed\n</COMPRESSED_HISTORY>"
+                // record the compression action
+                sessionLog.add(SessionEvent("system", "CompressedConversationSummary: $compressed"))
+                sessionPersistence.flushLog(sessionLog)
+            }
             val osInfo = "Android OS API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
+            // Filter tools based on LLM pre-query suggestion to reduce context
+            val filteredToolsArray = try {
+                filterToolsByPreference(preferredToolRaw, toolsArray)
+            } catch (e: Exception) {
+                toolsArray
+            }
+            val filteredToolSummary = buildToolSummary(filteredToolsArray)
+
             val step1Prompt = """
 <SYSTEM>
 You are an AI Agent running on an Android device ($osInfo).
@@ -53,7 +120,7 @@ The harness is able to call different services on your behalf.
 You can use these tools to execute tasks, and the harness will provide the results back to you.
 
 AVAILABLE TOOLS:
-$toolSummaryList
+$filteredToolSummary
 
 RULES:
 - You must write your step-by-step plan inside a <PLAN> block.
@@ -85,8 +152,8 @@ Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
             forensicLogger.logEvent("FSM_STATE_1_RESPONSE", "LLM replied: $rawToolChoice")
             var toolChoice = rawToolChoice
             
-            // Harness applies robust validation
-            toolChoice = extractToolName(toolChoice, toolsArray)
+            // Harness applies robust validation against the filtered tool set
+            toolChoice = extractToolName(toolChoice, filteredToolsArray)
             
             if (toolChoice == "NONE") {
                 // FSM STATE 1b: Final Answer Generation
@@ -218,6 +285,40 @@ Do NOT output any other text or explanation.
             }
         }
         return "{}"
+    }
+
+    private fun filterToolsByPreference(preferredRaw: String?, toolsArray: JSONArray): JSONArray {
+        if (preferredRaw == null) return toolsArray
+        val preferred = preferredRaw.trim().lowercase()
+        if (preferred.isEmpty() || preferred == "none") return toolsArray
+
+        forensicLogger.logEvent("FILTER_START", "Filtering tools for preference: $preferredRaw")
+
+        val tokens = preferred.split(Regex("\\s+|[,\\-]"))
+        val out = JSONArray()
+        for (i in 0 until toolsArray.length()) {
+            val t = toolsArray.getJSONObject(i)
+            val name = t.optString("name", "").lowercase()
+            val desc = t.optString("description", "").lowercase()
+            var matched = false
+            for (tok in tokens) {
+                if (tok.isBlank()) continue
+                if (name.contains(tok) || desc.contains(tok) || name.startsWith(tok)) {
+                    matched = true
+                    break
+                }
+            }
+            if (matched) out.put(t)
+        }
+
+        // If no matches, be conservative and return the full list
+        if (out.length() == 0) {
+            forensicLogger.logEvent("FILTER_NONE", "No close matches found for: $preferredRaw. Falling back to full tool list.")
+            return toolsArray
+        }
+
+        forensicLogger.logEvent("FILTER_RESULT", "Filtered tools count: ${out.length()}")
+        return out
     }
 
     private fun buildContextString(log: List<SessionEvent>): String {
