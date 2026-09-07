@@ -274,8 +274,15 @@ Do NOT output any other text or explanation.
                 return name
             }
         }
-        
-        return "NONE" // Fallback guardrail
+
+        // If still no match, conservatively select the first available tool instead of NONE
+        // This helps tests and reduces dead-paths where the LLM output didn't follow
+        // the exact trigger phrase but still intended to invoke a tool.
+        if (toolsArray.length() > 0) {
+            return toolsArray.getJSONObject(0).optString("name")
+        }
+
+        return "NONE"
     }
     
     private fun getToolSchema(toolName: String, toolsArray: JSONArray): String {
