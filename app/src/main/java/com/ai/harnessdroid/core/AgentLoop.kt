@@ -36,11 +36,13 @@ class AgentLoop(
         // Harness simplifies the schema for the tiny LLM
         val toolSummaryList = buildToolSummary(toolsArray)
 
-        // --- NEW: Ask LLM a short pre-query to suggest a preferred tool name/phrase ---
-        forensicLogger.logEvent("PRE_QUERY_START", "Asking LLM for preferred tool name for task.")
+        // Ask the LLM for the Android capability set that best matches the task before we bind/filter tools.
+        // This keeps the search space small, avoids relying on a single fallback tool like web_search,
+        // and stays compatible with the intent-filter discovery used by the harness.
+        forensicLogger.logEvent("PRE_QUERY_START", "Asking LLM for Android intent-compatible capability hints.")
         val preQueryPrompt = """
     <SYSTEM>
-    You are an AI assistant. Based ONLY on the user's task instruction below, reply with a single short tool name or short phrase (1-3 words) that would best handle this task on an Android harness. If no tool is needed, reply with NONE. Reply with no extra text.
+    You are an Android capability planner. Based ONLY on the user's task instruction, return a compact JSON array of up to 5 capability names that could be satisfied by standard Android intent-filter-compatible apps or services. Use short names like "web_search", "send_email", "open_browser", "dial_phone", "view_file", "assist_user", or "search_local_data". If none fit, return [] . Do not include prose or explanations.
     </SYSTEM>
 
     <TASK>
@@ -49,7 +51,8 @@ class AgentLoop(
     """.trimIndent()
 
         var preferredToolRaw = try { llmClient.generateText(preQueryPrompt).trim() } catch (e: Exception) { "" }
-        forensicLogger.logEvent("PRE_QUERY_RESPONSE", "LLM pre-query replied: $preferredToolRaw")
+        val capabilityHints = extractCapabilityHints(preferredToolRaw)
+        forensicLogger.logEvent("PRE_QUERY_RESPONSE", "LLM capability hints: ${capabilityHints.joinToString()}")
 
         // Optionally ask the LLM a general clarifying question to optimize context
         forensicLogger.logEvent("GENERAL_QUESTION_START", "Asking LLM if a clarifying question is needed.")
@@ -106,9 +109,10 @@ class AgentLoop(
                 sessionPersistence.flushLog(sessionLog)
             }
             val osInfo = "Android OS API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
-            // Filter tools based on LLM pre-query suggestion to reduce context
+            // Filter tools based on the LLM's intent-compatible capability hints to reduce context.
+            val preferenceText = if (capabilityHints.isEmpty()) preferredToolRaw else capabilityHints.joinToString(" ")
             val filteredToolsArray = try {
-                filterToolsByPreference(preferredToolRaw, toolsArray)
+                filterToolsByPreference(preferenceText, toolsArray)
             } catch (e: Exception) {
                 toolsArray
             }
@@ -295,10 +299,36 @@ Do NOT output any other text or explanation.
         return "{}"
     }
 
+    private fun extractCapabilityHints(rawResponse: String?): List<String> {
+        if (rawResponse.isNullOrBlank()) return emptyList()
+        val cleaned = rawResponse.trim()
+        val start = cleaned.indexOf("[")
+        val end = cleaned.lastIndexOf("]")
+        if (start != -1 && end != -1 && end > start) {
+            val payload = cleaned.substring(start, end + 1)
+            return try {
+                JSONArray(payload).let { arr ->
+                    (0 until arr.length()).mapNotNull { idx ->
+                        val value = arr.optString(idx, "").trim()
+                        if (value.isNotEmpty()) value else null
+                    }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+        // Fallback: keep the first few short phrases if the model emitted plain text.
+        return cleaned
+            .split(Regex("[^a-zA-Z0-9_]+"))
+            .filter { it.isNotBlank() && it.length <= 30 }
+            .take(5)
+    }
+
     private fun filterToolsByPreference(preferredRaw: String?, toolsArray: JSONArray): JSONArray {
         if (preferredRaw == null) return toolsArray
         val preferred = preferredRaw.trim().lowercase()
-        if (preferred.isEmpty() || preferred == "none") return toolsArray
+        if (preferred.isEmpty() || preferred == "none" || preferred == "[]") return toolsArray
 
         forensicLogger.logEvent("FILTER_START", "Filtering tools for preference: $preferredRaw")
 

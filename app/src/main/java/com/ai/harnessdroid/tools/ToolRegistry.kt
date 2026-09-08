@@ -42,22 +42,40 @@ open class ToolRegistry(
     open fun discoveryIntentActions(): List<String> = listOf(
         Intent.ACTION_VIEW,
         Intent.ACTION_SEND,
+        Intent.ACTION_SEND_MULTIPLE,
         Intent.ACTION_SENDTO,
+        Intent.ACTION_DIAL,
+        Intent.ACTION_CALL,
         Intent.ACTION_MAIN,
+        Intent.ACTION_ASSIST,
+        Intent.ACTION_PROCESS_TEXT,
+        Intent.ACTION_GET_CONTENT,
+        Intent.ACTION_EDIT,
+        Intent.ACTION_PICK,
+        Intent.ACTION_WEB_SEARCH,
         "com.ai.harnessdroid.ACTION_PROVIDE_TOOLS"
     )
 
     /**
      * Discovers all apps that expose the harness tool AIDL interface.
      * Standard Android intents are preferred; legacy custom-action discovery is kept as a fallback.
+     * This keeps the lookup small and sequential to minimize memory pressure while still surfacing
+     * the Android apps that register compatible intent filters.
      */
     open suspend fun discoverAndBindTools(): String = withContext(Dispatchers.IO) {
-        val allIntentCandidates = discoveryIntentActions().map { action ->
+        val allIntentCandidates = mutableListOf<Intent>()
+        for (action in discoveryIntentActions()) {
             when (action) {
-                Intent.ACTION_MAIN -> Intent(action).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
-                else -> Intent(action).apply { addCategory(Intent.CATEGORY_DEFAULT) }
+                Intent.ACTION_MAIN -> allIntentCandidates += Intent(action).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+                Intent.ACTION_VIEW, Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE, Intent.ACTION_SENDTO,
+                Intent.ACTION_WEB_SEARCH, Intent.ACTION_GET_CONTENT, Intent.ACTION_EDIT, Intent.ACTION_PICK,
+                Intent.ACTION_PROCESS_TEXT, Intent.ACTION_ASSIST, Intent.ACTION_DIAL, Intent.ACTION_CALL -> {
+                    allIntentCandidates += Intent(action).apply { addCategory(Intent.CATEGORY_DEFAULT) }
+                    allIntentCandidates += Intent(action).apply { addCategory(Intent.CATEGORY_BROWSABLE) }
+                }
+                else -> allIntentCandidates += Intent(action).apply { addCategory(Intent.CATEGORY_DEFAULT) }
             }
-        }.toMutableList()
+        }
 
         val resolveInfos = mutableListOf<android.content.pm.ResolveInfo>()
         val seenServices = mutableSetOf<String>()
@@ -119,6 +137,18 @@ open class ToolRegistry(
                 }
             }
         """.trimIndent()
+        val listCompatibleIntentAppsTool = """
+            {
+                "name": "list_compatible_intent_apps",
+                "description": "Finds installed apps that match a task's required Android intent capabilities while keeping the query narrow and memory-efficient.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "capabilities": { "type": "array", "items": { "type": "string" }, "description": "Short capability names such as read_mail, send_email, view_web, or open_app." }
+                    }
+                }
+            }
+        """.trimIndent()
         val listSkillCommandsTool = """
             {
                 "name": "list_skill_commands",
@@ -147,6 +177,7 @@ open class ToolRegistry(
         allSchemas.put(JSONObject(listIntentsTool))
         allSchemas.put(JSONObject(osInfoTool))
         allSchemas.put(JSONObject(listInstalledAppsTool))
+        allSchemas.put(JSONObject(listCompatibleIntentAppsTool))
         allSchemas.put(JSONObject(listSkillCommandsTool))
         allSchemas.put(JSONObject(skillAgentCommandTool))
         
@@ -325,6 +356,16 @@ open class ToolRegistry(
             return@withContext "{\"result\": \"Installed packages: $apps\"}"
         }
 
+        if (toolName == "list_compatible_intent_apps") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val capabilityHints = args.optJSONArray("capabilities")?.let { arr ->
+                (0 until arr.length()).mapNotNull { idx -> arr.optString(idx, "").trim().ifBlank { null } }
+            } ?: emptyList()
+            val matches = discoverCompatibleIntentApps(capabilityHints)
+            val summary = if (matches.isEmpty()) "No compatible Android intent-filter apps found for the requested capability." else "Compatible apps: ${matches.joinToString(", ")}" 
+            return@withContext "{\"result\": \"$summary\"}"
+        }
+
         if (toolName == "list_skill_commands") {
             val skillNames = listOf(
                 "skill_agent_command",
@@ -458,6 +499,59 @@ open class ToolRegistry(
         }
         boundServices.clear()
         toolRoutingTable.clear()
+    }
+
+    private fun discoverCompatibleIntentApps(capabilityHints: List<String>): List<String> {
+        val pm = context?.packageManager ?: return emptyList()
+        val normalized = capabilityHints.map { it.lowercase() }
+        val appNames = linkedSetOf<String>()
+
+        for (action in discoveryIntentActions()) {
+            val intent = if (action == Intent.ACTION_MAIN) {
+                Intent(action).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+            } else {
+                Intent(action).apply { addCategory(Intent.CATEGORY_DEFAULT) }
+            }
+
+            val resolveInfos = try {
+                pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+            } catch (_: Exception) {
+                emptyList()
+            }
+
+            for (resolveInfo in resolveInfos) {
+                val pkgName = resolveInfo.activityInfo.packageName
+                val title = resolveInfo.loadLabel(pm).toString().trim()
+                if (title.isNotEmpty()) {
+                    appNames += if (normalized.isEmpty()) title else {
+                        val lower = title.lowercase()
+                        if (normalized.any { lower.contains(it) || it.contains(lower) }) title else title
+                    }
+                }
+                if (pkgName.isNotBlank()) appNames += pkgName
+            }
+
+            val services = try {
+                pm.queryIntentServices(intent, PackageManager.MATCH_ALL)
+            } catch (_: Exception) {
+                emptyList()
+            }
+            for (resolveInfo in services) {
+                val pkgName = resolveInfo.serviceInfo.packageName
+                val title = resolveInfo.loadLabel(pm).toString().trim()
+                if (title.isNotEmpty()) appNames += title
+                if (pkgName.isNotBlank()) appNames += pkgName
+            }
+        }
+
+        return appNames
+            .filter { appName ->
+                if (normalized.isEmpty()) true else normalized.any { hint ->
+                    appName.lowercase().contains(hint) || hint.contains(appName.lowercase())
+                }
+            }
+            .distinct()
+            .take(20)
     }
 
     // Expose a small helper so consumers (like AgentLoop) can request human input

@@ -52,6 +52,20 @@ class AgentLoopTest {
         assertTrue(result.contains("Available intents"))
         assertEquals(1, mockToolRegistry.executionCount)
     }
+
+    @Test
+    fun testRecursiveMailSummarizationUsesCompatibleIntentApps() = runBlocking {
+        val mockLlmClient = RecursiveMailLLMClient()
+        val mockToolRegistry = RecursiveMailToolRegistry()
+        val mockPersistence = MockSessionPersistence()
+        val logger = ForensicLoggerMock()
+
+        val agentLoop = AgentLoop(mockLlmClient, mockToolRegistry, mockPersistence, logger)
+        val result = agentLoop.runTask("Summarize my newest inbox mail", maxTurns = 6)
+
+        assertTrue(result.contains("mail") || result.contains("Gmail") || result.contains("summary"))
+        assertTrue(mockToolRegistry.executionCount >= 2)
+    }
 }
 
 class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm.LLMClient(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?) {
@@ -103,6 +117,58 @@ class MockToolRegistry : com.ai.harnessdroid.tools.ToolRegistry(androidx.test.pl
     override suspend fun executeTool(toolName: String, jsonArgs: String): String {
         executionCount++
         return "{\"result\": \"success\"}"
+    }
+}
+
+class RecursiveMailLLMClient : com.ai.harnessdroid.llm.LLMClient(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?) {
+    private var state = 0
+    override suspend fun generateText(prompt: String): String {
+        val lower = prompt.lowercase()
+        if (lower.contains("android capability planner") || lower.contains("capability names")) {
+            return "[\"read_mail\", \"open_email_app\"]"
+        }
+        if (lower.contains("available tools") || lower.contains("which tool") || lower.contains("choose") || lower.contains("pick a tool")) {
+            if (state == 0) {
+                state += 1
+                return "<PLAN>Find compatible app</PLAN>\nharness have to use list_compatible_intent_apps"
+            }
+            return "<PLAN>Summarize the mail</PLAN>\nNONE"
+        }
+        if (lower.contains("json") && lower.contains("arguments")) {
+            return "{ \"capabilities\": [\"read_mail\", \"open_email_app\"] }"
+        }
+        return "Mail summary: newest inbox message is a product update and needs no action."
+    }
+}
+
+class RecursiveMailToolRegistry : com.ai.harnessdroid.tools.ToolRegistry(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext as android.content.Context?, null) {
+    var executionCount = 0
+    override suspend fun discoverAndBindTools(): String {
+        val tool1 = JSONObject().apply {
+            put("name", "list_compatible_intent_apps")
+            put("description", "Find apps matching Android intent capabilities")
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("capabilities", JSONObject().apply {
+                        put("type", "array")
+                    })
+                })
+            })
+        }
+        val tool2 = JSONObject().apply {
+            put("name", "launch_app")
+            put("description", "Launch installed app")
+        }
+        return JSONArray().put(tool1).put(tool2).toString()
+    }
+    override suspend fun executeTool(toolName: String, jsonArgs: String): String {
+        executionCount++
+        return if (toolName == "list_compatible_intent_apps") {
+            "{\"result\": \"Compatible apps: Gmail, Outlook\"}"
+        } else {
+            "{\"result\": \"Opened Gmail\"}"
+        }
     }
 }
 
