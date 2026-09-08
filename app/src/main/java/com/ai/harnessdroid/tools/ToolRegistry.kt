@@ -79,15 +79,20 @@ open class ToolRegistry(
 
         val resolveInfos = mutableListOf<android.content.pm.ResolveInfo>()
         val seenServices = mutableSetOf<String>()
+        val pm = context?.packageManager
 
         for (intent in allIntentCandidates) {
-            val queried = context?.packageManager?.queryIntentServices(intent, PackageManager.GET_META_DATA) ?: emptyList()
+            val queried = pm?.queryIntentServices(intent, PackageManager.GET_META_DATA) ?: emptyList()
             for (resolveInfo in queried) {
-                val key = "${resolveInfo.serviceInfo.packageName}/${resolveInfo.serviceInfo.name}"
-                if (key !in seenServices) {
-                    resolveInfos.add(resolveInfo)
-                    seenServices.add(key)
-                }
+                val serviceInfo = resolveInfo.serviceInfo ?: continue
+                val packageName = serviceInfo.packageName ?: continue
+                val key = "$packageName/${serviceInfo.name}"
+                if (key in seenServices) continue
+                if (packageName == context?.packageName) continue
+                if (!isUserInstalledApp(packageName)) continue
+                if (!serviceInfo.exported) continue
+                resolveInfos.add(resolveInfo)
+                seenServices.add(key)
             }
         }
 
@@ -184,8 +189,8 @@ open class ToolRegistry(
         // Removed mock read_emails tool. Real tools will be discovered via Intent.
 
         // Create a single tool that lets the LLM launch any app by name, to avoid blowing up context window
-        val pm = context?.packageManager
-        if (pm != null) {
+        val packageManager = context?.packageManager
+        if (packageManager != null) {
             val launchAppTool = JSONObject().apply {
                 put("name", "launch_app")
                 put("description", "Launch any installed Android application by name (e.g. 'Gmail', 'Maps', 'YouTube').")
@@ -225,11 +230,11 @@ open class ToolRegistry(
             // Build a lookup table of appName -> packageName for executeTool
             val mainIntent = Intent(Intent.ACTION_MAIN, null)
             mainIntent.addCategory(Intent.CATEGORY_LAUNCHER)
-            val launchables = pm.queryIntentActivities(mainIntent, 0)
+            val launchables = packageManager.queryIntentActivities(mainIntent, 0)
             
             for (resolveInfo in launchables) {
                 val pkgName = resolveInfo.activityInfo.packageName
-                val appName = resolveInfo.loadLabel(pm).toString().lowercase()
+                val appName = resolveInfo.loadLabel(packageManager).toString().lowercase()
                 toolRoutingTable["app_pkg_$appName"] = pkgName
             }
         }
@@ -552,6 +557,17 @@ open class ToolRegistry(
             }
             .distinct()
             .take(20)
+    }
+
+    private fun isUserInstalledApp(packageName: String): Boolean {
+        val pm = context?.packageManager ?: return false
+        return try {
+            val appInfo = pm.getApplicationInfo(packageName, 0)
+            val isSystem = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+            !isSystem
+        } catch (_: Exception) {
+            false
+        }
     }
 
     // Expose a small helper so consumers (like AgentLoop) can request human input
