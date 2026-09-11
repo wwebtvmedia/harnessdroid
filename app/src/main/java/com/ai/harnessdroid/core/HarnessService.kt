@@ -109,6 +109,10 @@ class HarnessService : Service(), HumanInteractionHandler {
 
                 val result = agentLoop.runTask(request)
                 forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
+            } catch (e: Exception) {
+                // An uncaught failure here (e.g. SecurityException when no LLM provider
+                // is installed) would crash the whole process instead of failing the task.
+                forensicLogger.logEvent("TASK_ERROR", "Task failed: ${e.message}")
             } finally {
                 taskRunning.set(false)
             }
