@@ -22,9 +22,11 @@ data class PermissionRequest(
     val reason: String
 )
 
-data class InputRequest(
+data class ClarificationRequest(
     val id: String,
-    val prompt: String
+    val prompt: String,
+    val defaultAnswer: String? = null,
+    val timeoutMs: Long = 120_000L
 )
 
 class HarnessService : Service(), HumanInteractionHandler {
@@ -40,15 +42,19 @@ class HarnessService : Service(), HumanInteractionHandler {
     val forensicState: StateFlow<List<String>> = _forensicState.asStateFlow()
 
     val permissionRequests = MutableSharedFlow<PermissionRequest>(extraBufferCapacity = 1)
-    val inputRequests = MutableSharedFlow<InputRequest>(extraBufferCapacity = 1)
+    val clarificationRequests = MutableSharedFlow<ClarificationRequest>(extraBufferCapacity = 1)
 
     private val permissionResponses = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<Boolean>>()
-    private val inputResponses = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<String>>()
+    private val clarificationResponses = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<String>>()
 
     // Only one agent task may run at a time: concurrent tasks would corrupt the shared
     // session log and tool registry state.
     private val taskRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    // Kept as a field so the clarification fallback can consult the LLM when the
+    // human does not answer in time.
+    private lateinit var llmClient: com.ai.harnessdroid.llm.LLMClient
+    private lateinit var clarificationStore: ClarificationStore
     private lateinit var agentLoop: AgentLoop
     private lateinit var forensicLogger: ForensicLogger
     private lateinit var sessionPersistence: SessionPersistence
@@ -69,7 +75,8 @@ class HarnessService : Service(), HumanInteractionHandler {
         
         forensicLogger.logEvent("SYSTEM", "HarnessService started.")
         
-        val llmClient = com.ai.harnessdroid.llm.LLMClient(this)
+        llmClient = com.ai.harnessdroid.llm.LLMClient(this)
+        clarificationStore = ClarificationStore(filesDir)
         val interactionManager = InteractionManager(this)
         toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
         
@@ -132,17 +139,80 @@ class HarnessService : Service(), HumanInteractionHandler {
         return approved
     }
 
-    override suspend fun askUserForInput(prompt: String): String {
-        forensicLogger.logEvent("INPUT_ASK", "Requesting user input: $prompt")
+    override suspend fun askUserForInput(prompt: String, defaultAnswer: String?, timeoutSeconds: Long): String {
+        val effectiveDefault = defaultAnswer?.trim()?.ifBlank { null }
         val requestId = java.util.UUID.randomUUID().toString()
-        val deferred = kotlinx.coroutines.CompletableDeferred<String>()
-        inputResponses[requestId] = deferred
+        val request = ClarificationRequest(
+            id = requestId,
+            prompt = prompt.trim(),
+            defaultAnswer = effectiveDefault,
+            timeoutMs = timeoutSeconds.coerceAtLeast(1L) * 1000L
+        )
+        forensicLogger.logEvent("INPUT_ASK", "Requesting user input (${request.timeoutMs / 1000}s): ${request.prompt}")
+        clarificationStore.save(ClarificationRecord(
+            id = requestId,
+            prompt = request.prompt,
+            defaultAnswer = request.defaultAnswer,
+            createdAt = System.currentTimeMillis(),
+            expiresAt = System.currentTimeMillis() + request.timeoutMs,
+            source = "pending"
+        ))
 
-        inputRequests.emit(InputRequest(requestId, prompt))
+        // Register the deferred BEFORE emitting so a fast UI response can never
+        // fall into the gap between emit and registration.
+        val deferred = clarificationResponses.getOrPut(requestId) { kotlinx.coroutines.CompletableDeferred() }
+        clarificationRequests.emit(request)
 
-        val reply = deferred.await()
-        forensicLogger.logEvent("INPUT_RESPONSE", "User replied: $reply")
-        return reply
+        val response = kotlinx.coroutines.withTimeoutOrNull(request.timeoutMs) { deferred.await() }
+        val answer = response?.trim()?.ifBlank { null }
+        if (answer != null) {
+            forensicLogger.logEvent("INPUT_RESPONSE", "User replied: $answer")
+            clarificationStore.save(ClarificationRecord(
+                id = requestId,
+                prompt = request.prompt,
+                defaultAnswer = request.defaultAnswer,
+                createdAt = System.currentTimeMillis(),
+                expiresAt = System.currentTimeMillis() + request.timeoutMs,
+                answeredAt = System.currentTimeMillis(),
+                humanAnswer = answer,
+                finalAnswer = answer,
+                source = "human"
+            ))
+            return answer
+        }
+
+        // No human answer in time: fall back to the caller-provided default, or
+        // let the LLM give its best-guess answer so the task keeps making
+        // progress instead of blocking forever.
+        val finalChoice = effectiveDefault ?: try {
+            val llmPrompt = """
+                <SYSTEM>
+                You are a helpful assistant. The user did not answer a clarification question within the allowed time.
+                Provide the most likely answer to the clarification, but keep it brief and decisive.
+                </SYSTEM>
+
+                <QUESTION>
+                ${request.prompt}
+                </QUESTION>
+            """.trimIndent()
+            llmClient.generateText(llmPrompt).trim().ifBlank { null }
+        } catch (_: Exception) {
+            null
+        }
+
+        val chosenAnswer = finalChoice ?: "No clarification was provided by the human."
+        forensicLogger.logEvent("INPUT_TIMEOUT", "No human answer; using ${if (effectiveDefault != null) "default" else "LLM fallback"}: $chosenAnswer")
+        clarificationStore.save(ClarificationRecord(
+            id = requestId,
+            prompt = request.prompt,
+            defaultAnswer = request.defaultAnswer,
+            createdAt = System.currentTimeMillis(),
+            expiresAt = System.currentTimeMillis() + request.timeoutMs,
+            answeredAt = System.currentTimeMillis(),
+            finalAnswer = chosenAnswer,
+            source = if (effectiveDefault != null) "default" else "llm"
+        ))
+        return chosenAnswer
     }
 
     fun providePermissionResponse(requestId: String, approved: Boolean) {
@@ -150,9 +220,10 @@ class HarnessService : Service(), HumanInteractionHandler {
         permissionResponses.remove(requestId)
     }
 
-    fun provideInputResponse(requestId: String, text: String) {
-        inputResponses[requestId]?.complete(text)
-        inputResponses.remove(requestId)
+    fun provideClarificationResponse(requestId: String, answer: String) {
+        val trimmed = answer.trim()
+        clarificationResponses[requestId]?.complete(trimmed)
+        clarificationResponses.remove(requestId)
     }
 
     private fun createNotification(): Notification {

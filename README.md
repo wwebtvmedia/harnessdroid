@@ -102,7 +102,7 @@ Try using the quick-assist chips below the top bar or inputting your own prompts
 
 ### Built-in Tools
 Harness Droid natively includes a few helpful tools:
-- `ask_human_for_input`: Allows the LLM to pause and ask the user for clarifying information.
+- `ask_human_for_input`: Allows the LLM to pause and ask the user for clarifying information. It supports an optional default answer and a two-minute timeout. If the human does not respond in time, the system uses the default value; if no default exists, it asks the LLM for a best-effort fallback. Every prompt/answer pair is persisted in a lightweight JSON-backed NoSQL-style store.
 - `get_os_info`: Retrieves basic device information (API level, Model).
 - `list_harness_intents`: Discovers what tool provider packages are available on the device.
 - `list_installed_apps`: Lists all installed packages.

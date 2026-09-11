@@ -107,11 +107,13 @@ open class ToolRegistry(
         val builtInAskHuman = """
             {
                 "name": "ask_human_for_input",
-                "description": "Hand over control to the human to ask for information or clarification.",
+                "description": "Hand over control to the human to ask for information or clarification. Supports an optional default answer and a 2-minute timeout.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "prompt": { "type": "string", "description": "The question to ask the user" }
+                        "prompt": { "type": "string", "description": "The question to ask the user" },
+                        "default_answer": { "type": "string", "description": "Optional fallback value if the human does not answer within two minutes." },
+                        "timeout_seconds": { "type": "integer", "description": "Optional timeout in seconds; defaults to 120." }
                     },
                     "required": ["prompt"]
                 }
@@ -418,8 +420,11 @@ open class ToolRegistry(
         }
 
         if (toolName == "ask_human_for_input") {
-            val prompt = JSONObject(jsonArgs).optString("prompt", "Please provide input:")
-            return@withContext interactionManager?.requestHumanInput(prompt) ?: ""
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val prompt = args.optString("prompt", "Please provide input:")
+            val defaultAnswer = args.optString("default_answer", "").ifBlank { null }
+            val timeoutSeconds = args.optLong("timeout_seconds", 120L).coerceAtLeast(1L)
+            return@withContext interactionManager?.requestHumanInput(prompt, defaultAnswer, timeoutSeconds) ?: ""
         }
 
 
@@ -674,7 +679,7 @@ open class ToolRegistry(
     }
 
     // Expose a small helper so consumers (like AgentLoop) can request human input
-    open suspend fun requestHumanInput(prompt: String): String? {
-        return interactionManager?.requestHumanInput(prompt)
+    open suspend fun requestHumanInput(prompt: String, defaultAnswer: String? = null, timeoutSeconds: Long = 120): String? {
+        return interactionManager?.requestHumanInput(prompt, defaultAnswer, timeoutSeconds)
     }
 }

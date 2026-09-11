@@ -113,17 +113,21 @@ fun HarnessScreen(harnessService: HarnessService?) {
     val forensicLog = harnessService?.forensicState?.collectAsState(initial = emptyList())?.value ?: emptyList()
     
     var activePermissionRequest by remember { mutableStateOf<com.ai.harnessdroid.core.PermissionRequest?>(null) }
-    var activeInputRequest by remember { mutableStateOf<com.ai.harnessdroid.core.InputRequest?>(null) }
+    var activeClarificationRequest by remember { mutableStateOf<com.ai.harnessdroid.core.ClarificationRequest?>(null) }
+    var clarificationInput by remember { mutableStateOf("") }
 
     LaunchedEffect(harnessService) {
-        harnessService?.permissionRequests?.collect { req ->
-            activePermissionRequest = req
+        if (harnessService == null) return@LaunchedEffect
+        launch {
+            harnessService.permissionRequests.collect { req ->
+                activePermissionRequest = req
+            }
         }
-    }
-
-    LaunchedEffect(harnessService) {
-        harnessService?.inputRequests?.collect { req ->
-            activeInputRequest = req
+        launch {
+            harnessService.clarificationRequests.collect { req ->
+                activeClarificationRequest = req
+                clarificationInput = req.defaultAnswer ?: ""
+            }
         }
     }
 
@@ -142,16 +146,26 @@ fun HarnessScreen(harnessService: HarnessService?) {
         )
     }
 
-    activeInputRequest?.let { req ->
-        InputPopup(
+    activeClarificationRequest?.let { req ->
+        ClarificationPopup(
             prompt = req.prompt,
-            onSubmit = { reply ->
-                harnessService?.provideInputResponse(req.id, reply)
-                activeInputRequest = null
+            defaultAnswer = req.defaultAnswer,
+            value = clarificationInput,
+            onValueChange = { clarificationInput = it },
+            onSubmit = {
+                harnessService?.provideClarificationResponse(req.id, clarificationInput)
+                activeClarificationRequest = null
+                clarificationInput = ""
             },
-            onSkip = {
-                harnessService?.provideInputResponse(req.id, "")
-                activeInputRequest = null
+            onUseDefault = {
+                harnessService?.provideClarificationResponse(req.id, req.defaultAnswer ?: "")
+                activeClarificationRequest = null
+                clarificationInput = ""
+            },
+            onDismiss = {
+                harnessService?.provideClarificationResponse(req.id, req.defaultAnswer ?: "")
+                activeClarificationRequest = null
+                clarificationInput = ""
             }
         )
     }
@@ -400,28 +414,40 @@ fun PermissionPopup(toolName: String, reason: String, onApprove: () -> Unit, onD
 }
 
 @Composable
-fun InputPopup(prompt: String, onSubmit: (String) -> Unit, onSkip: () -> Unit) {
-    var reply by remember { mutableStateOf("") }
+fun ClarificationPopup(
+    prompt: String,
+    defaultAnswer: String?,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onUseDefault: () -> Unit,
+    onDismiss: () -> Unit
+) {
     AlertDialog(
-        onDismissRequest = onSkip,
+        onDismissRequest = onDismiss,
         title = { Text("The agent has a question") },
         text = {
             Column {
                 Text(prompt)
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
-                    value = reply,
-                    onValueChange = { reply = it },
+                    value = value,
+                    onValueChange = onValueChange,
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Your answer...") }
+                    placeholder = { Text(defaultAnswer ?: "Your answer...") }
                 )
             }
         },
         confirmButton = {
-            Button(onClick = { onSubmit(reply) }, enabled = reply.isNotBlank()) { Text("Answer") }
+            Button(onClick = onSubmit) { Text("Submit") }
         },
         dismissButton = {
-            OutlinedButton(onClick = onSkip) { Text("Skip") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!defaultAnswer.isNullOrBlank()) {
+                    OutlinedButton(onClick = onUseDefault) { Text("Use Default") }
+                }
+                OutlinedButton(onClick = onDismiss) { Text("Ignore") }
+            }
         }
     )
 }

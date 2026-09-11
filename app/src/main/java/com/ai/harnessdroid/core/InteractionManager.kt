@@ -12,7 +12,7 @@ import kotlin.coroutines.resume
  */
 interface HumanInteractionHandler {
     suspend fun askForPermission(toolName: String, intentPackage: String, reason: String): Boolean
-    suspend fun askUserForInput(prompt: String): String
+    suspend fun askUserForInput(prompt: String, defaultAnswer: String? = null, timeoutSeconds: Long = 120): String
 }
 
 class InteractionManager(private val handler: HumanInteractionHandler) {
@@ -45,7 +45,7 @@ class InteractionManager(private val handler: HumanInteractionHandler) {
     /**
      * A built-in tool that the LLM can call if it realizes it needs human input.
      */
-    suspend fun requestHumanInput(prompt: String): String {
-        return handler.askUserForInput(prompt)
+    suspend fun requestHumanInput(prompt: String, defaultAnswer: String? = null, timeoutSeconds: Long = 120): String {
+        return handler.askUserForInput(prompt, defaultAnswer, timeoutSeconds)
     }
 }
