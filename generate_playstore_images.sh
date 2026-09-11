@@ -46,14 +46,78 @@ shot() {
   return 0
 }
 
+tap_dump_text() {
+  # tap_dump_text <dump> <text> : taps the center of the first node whose text
+  # attribute equals <text> inside an already-collected UI dump.
+  local dump="$1" text="$2" bounds x1 y1 x2 y2
+  bounds=$(printf '%s' "$dump" | tr '>' '\n' | grep -F "text=\"$text\"" \
+    | grep -oE 'bounds="\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]"' | head -1 \
+    | grep -oE '\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]') || return 1
+  [ -z "$bounds" ] && return 1
+  x1=$(echo "$bounds" | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\1/')
+  y1=$(echo "$bounds" | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\2/')
+  x2=$(echo "$bounds" | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\3/')
+  y2=$(echo "$bounds" | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\4/')
+  adb -s "$DEVICE" shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))
+  sleep 1
+  return 0
+}
+
+ui_autopilot() {
+  # The agent pauses mid-task on human-in-the-loop dialogs and TASK_END never
+  # fires until they are answered, so answer them automatically:
+  #  - "The agent has a question": tap the answer field, type a generic answer,
+  #    then confirm. Never send ESC/BACK here: the typed text only commits to
+  #    the Compose field when "Answer" is pressed, and ESC would dismiss the
+  #    dialog with an empty reply. The button sits above the IME, so tapping it
+  #    while the keyboard is open works.
+  #  - tool permission popup: Allow
+  local dump
+  adb -s "$DEVICE" shell uiautomator dump /sdcard/ps_ui_dump.xml >/dev/null 2>&1
+  dump=$(adb -s "$DEVICE" shell cat /sdcard/ps_ui_dump.xml 2>/dev/null || true)
+  adb -s "$DEVICE" shell rm -f /sdcard/ps_ui_dump.xml
+  case "$dump" in
+    *"The agent has a question"*)
+      echo "  [autopilot] answering agent question..." >&2
+      if tap_dump_text "$dump" "Your answer..."; then
+        sleep 2
+        # %s encodes spaces for `input text`.
+        adb -s "$DEVICE" shell input text "Use%sthe%sappropriate%stool."
+        sleep 1
+      fi
+      tap_text "Answer" || true
+      ;;
+    *Allow*)
+      echo "  [autopilot] approving tool permission..." >&2
+      tap_dump_text "$dump" "Allow" || true
+      ;;
+  esac
+}
+
+dismiss_dialogs() {
+  # Best-effort cleanup: close any leftover question/permission dialog that
+  # would block taps on the header buttons.
+  local dump
+  adb -s "$DEVICE" shell uiautomator dump /sdcard/ps_ui_dump.xml >/dev/null 2>&1
+  dump=$(adb -s "$DEVICE" shell cat /sdcard/ps_ui_dump.xml 2>/dev/null || true)
+  adb -s "$DEVICE" shell rm -f /sdcard/ps_ui_dump.xml
+  case "$dump" in
+    *"The agent has a question"*) tap_text "Skip" ;;
+    *Allow*) tap_dump_text "$dump" "Deny" || true ;;
+  esac
+  sleep 1
+}
+
 wait_task_end() {
-  # Waits until the agent logs TASK_END (max 420s: the local LLM is slow)
+  # Waits until the agent logs TASK_END (max 600s: the local LLM is slow and
+  # a task spans several LLM calls).
   adb -s "$DEVICE" logcat -c
-  for _ in $(seq 1 140); do
+  for _ in $(seq 1 200); do
     if adb -s "$DEVICE" logcat -d 2>/dev/null | grep -q "TASK_END"; then
       sleep 2
       return 0
     fi
+    ui_autopilot
     sleep 3
   done
   echo "Warning: TASK_END not observed, capturing anyway." >&2
@@ -119,15 +183,23 @@ shot 02_os_info_task
 
 echo "4/6 Run a real task: launch Gmail (intent discovery)..."
 run_prompt "Launch the Gmail app"
+# The task may have really launched Gmail: bring the harness back to the
+# foreground so the shot shows the harness session, not the launched app.
+adb -s "$DEVICE" shell am start -n "$PKG/.ui.MainActivity" >/dev/null
+sleep 2
 shot 03_launch_gmail
 
 echo "5/6 Open the Available Tools dialog..."
+dismiss_dialogs
+adb -s "$DEVICE" shell am start -n "$PKG/.ui.MainActivity" >/dev/null
+sleep 2
 tap_text "List Tools"
 shot 04_tools_dialog
 tap_text "Close" || true
 sleep 1
 
 echo "6/6 Open the Execution Plan view..."
+dismiss_dialogs
 tap_text "View Plan"
 shot 05_plan_view
 tap_text "Close" || true
