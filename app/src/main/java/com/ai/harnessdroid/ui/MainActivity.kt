@@ -27,7 +27,6 @@ import com.ai.harnessdroid.core.HarnessService
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 
 class MainActivity : ComponentActivity() {
     private var harnessServiceState = mutableStateOf<HarnessService?>(null)
@@ -86,6 +85,17 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // With launchMode="singleTop", a second launch intent (e.g. an external automation
+        // passing a prompt) arrives here instead of recreating the activity.
+        val incomingPrompt = intent.getStringExtra("prompt") ?: intent.getStringExtra(Intent.EXTRA_TEXT)
+        if (!incomingPrompt.isNullOrBlank()) {
+            pendingPrompt = incomingPrompt
+            maybeRunPendingTask()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         if (isBound) unbindService(connection)
@@ -103,10 +113,17 @@ fun HarnessScreen(harnessService: HarnessService?) {
     val forensicLog = harnessService?.forensicState?.collectAsState(initial = emptyList())?.value ?: emptyList()
     
     var activePermissionRequest by remember { mutableStateOf<com.ai.harnessdroid.core.PermissionRequest?>(null) }
-    
+    var activeInputRequest by remember { mutableStateOf<com.ai.harnessdroid.core.InputRequest?>(null) }
+
     LaunchedEffect(harnessService) {
         harnessService?.permissionRequests?.collect { req ->
             activePermissionRequest = req
+        }
+    }
+
+    LaunchedEffect(harnessService) {
+        harnessService?.inputRequests?.collect { req ->
+            activeInputRequest = req
         }
     }
 
@@ -121,6 +138,20 @@ fun HarnessScreen(harnessService: HarnessService?) {
             onDeny = {
                 harnessService?.providePermissionResponse(req.id, false)
                 activePermissionRequest = null
+            }
+        )
+    }
+
+    activeInputRequest?.let { req ->
+        InputPopup(
+            prompt = req.prompt,
+            onSubmit = { reply ->
+                harnessService?.provideInputResponse(req.id, reply)
+                activeInputRequest = null
+            },
+            onSkip = {
+                harnessService?.provideInputResponse(req.id, "")
+                activeInputRequest = null
             }
         )
     }
@@ -200,10 +231,17 @@ fun HarnessScreen(harnessService: HarnessService?) {
                     }
 
                     if (showVersionDialog) {
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        val versionName = try {
+                            context.packageManager
+                                .getPackageInfo(context.packageName, 0).versionName
+                        } catch (_: Exception) {
+                            ""
+                        }
                         AlertDialog(
                             onDismissRequest = { showVersionDialog = false },
                             title = { Text("Version") },
-                            text = { Text("Tree4Five Harness v1.0.0") },
+                            text = { Text("Tree4Five Harness v$versionName") },
                             confirmButton = {
                                 Button(onClick = { showVersionDialog = false }) { Text("OK") }
                             }
@@ -362,6 +400,33 @@ fun PermissionPopup(toolName: String, reason: String, onApprove: () -> Unit, onD
 }
 
 @Composable
+fun InputPopup(prompt: String, onSubmit: (String) -> Unit, onSkip: () -> Unit) {
+    var reply by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = { Text("The agent has a question") },
+        text = {
+            Column {
+                Text(prompt)
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = reply,
+                    onValueChange = { reply = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Your answer...") }
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSubmit(reply) }, enabled = reply.isNotBlank()) { Text("Answer") }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onSkip) { Text("Skip") }
+        }
+    )
+}
+
+@Composable
 fun ToolsDialog(toolsJson: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -408,6 +473,7 @@ fun LLMConfigDialog(
     var customUrl by remember { mutableStateOf(configManager.customUrl) }
     var customApiKey by remember { mutableStateOf(configManager.customApiKey) }
     var customApiType by remember { mutableStateOf(configManager.customApiType) }
+    var customModel by remember { mutableStateOf(configManager.customModel) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -448,7 +514,14 @@ fun LLMConfigDialog(
                     OutlinedTextField(
                         value = customApiType,
                         onValueChange = { customApiType = it },
-                        label = { Text("API Type (OpenAI, Gemini, etc.)") },
+                        label = { Text("API Type (OpenAI-compatible)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = customModel,
+                        onValueChange = { customModel = it },
+                        label = { Text("Model name (e.g. gpt-4o-mini, deepseek-chat)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -460,6 +533,7 @@ fun LLMConfigDialog(
                 configManager.customUrl = customUrl
                 configManager.customApiKey = customApiKey
                 configManager.customApiType = customApiType
+                configManager.customModel = customModel
                 onDismiss()
             }) {
                 Text("Save")

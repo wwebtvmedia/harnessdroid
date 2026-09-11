@@ -13,6 +13,7 @@ import com.ai.harnessdroid.core.InteractionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicInteger
@@ -35,6 +36,10 @@ open class ToolRegistry(
     private val TAG = "ToolRegistry"
     private val boundServices = mutableMapOf<String, BoundToolService>()
     private val toolRoutingTable = mutableMapOf<String, String>() // Maps toolName -> packageName
+
+    // Timeouts so a misbehaving tool provider can never stall the AgentLoop forever.
+    private val BIND_TIMEOUT_MS = 5_000L
+    private val TOOL_CALL_TIMEOUT_MS = 15_000L
 
     private val mcpRequestId = AtomicInteger(1)
     private val pendingRequests = ConcurrentHashMap<Int, Continuation<JSONObject>>()
@@ -245,7 +250,11 @@ open class ToolRegistry(
             val component = ComponentName(packageName, className)
 
             try {
-                val boundService = bindService(component)
+                // Reuse an already-bound connection: discoverAndBindTools runs on every task
+                // (and on the "List Tools" button), and re-binding would leak binder connections.
+                val boundService = boundServices[packageName]
+                    ?: withTimeoutOrNull(BIND_TIMEOUT_MS) { bindService(component) }
+                    ?: throw java.util.concurrent.TimeoutException("Timed out binding to $packageName")
                 boundServices[packageName] = boundService
                 
                 // Send MCP tools/list request
@@ -299,29 +308,37 @@ open class ToolRegistry(
 
     private suspend fun bindService(componentName: ComponentName): BoundToolService = suspendCancellableCoroutine { continuation ->
         var serviceBinder: IToolProviderService? = null
-        
+
         val mcpCallback = object : IToolCallback.Stub() {
             override fun onMcpMessage(jsonRpcMessage: String) {
                 try {
                     val response = JSONObject(jsonRpcMessage)
                     val id = response.optInt("id", -1)
                     if (id != -1) {
-                        pendingRequests.remove(id)?.resume(response)
+                        pendingRequests.remove(id)?.let { cont ->
+                            try { cont.resume(response) } catch (_: IllegalStateException) {
+                                // Continuation already resumed or cancelled (e.g. timeout) — ignore late reply.
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to parse MCP response", e)
                 }
             }
         }
-        
+
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, service: IBinder?) {
                 serviceBinder = IToolProviderService.Stub.asInterface(service)
                 try {
                     serviceBinder?.registerCallback(mcpCallback)
-                    continuation.resume(BoundToolService(name, serviceBinder!!, this, mcpCallback))
+                    if (continuation.isActive) {
+                        continuation.resume(BoundToolService(name, serviceBinder!!, this, mcpCallback))
+                    }
                 } catch (e: Exception) {
-                    continuation.resumeWithException(e)
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(e)
+                    }
                 }
             }
 
@@ -346,19 +363,20 @@ open class ToolRegistry(
         // Handle built-in tools first
         if (toolName == "get_os_info") {
             val info = "Android API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
-            return@withContext "{\"result\": \"$info\"}"
+            return@withContext JSONObject().put("result", info).toString()
         }
 
         if (toolName == "list_harness_intents") {
             val available = toolRoutingTable.entries.joinToString(", ") { "${it.key} (${it.value})" }
-            return@withContext "{\"result\": \"Available intents and packages: $available. Built-in tools: ask_human_for_input, list_harness_intents, get_os_info, list_installed_apps\"}"
+            val result = "Available intents and packages: $available. Built-in tools: ask_human_for_input, list_harness_intents, get_os_info, list_installed_apps"
+            return@withContext JSONObject().put("result", result).toString()
         }
 
         if (toolName == "list_installed_apps") {
             val pm = context?.packageManager
             val packages = pm?.getInstalledPackages(PackageManager.GET_META_DATA)
             val apps = packages?.joinToString(", ") { it.packageName } ?: "None"
-            return@withContext "{\"result\": \"Installed packages: $apps\"}"
+            return@withContext JSONObject().put("result", "Installed packages: $apps").toString()
         }
 
         if (toolName == "list_compatible_intent_apps") {
@@ -367,8 +385,8 @@ open class ToolRegistry(
                 (0 until arr.length()).mapNotNull { idx -> arr.optString(idx, "").trim().ifBlank { null } }
             } ?: emptyList()
             val matches = discoverCompatibleIntentApps(capabilityHints)
-            val summary = if (matches.isEmpty()) "No compatible Android intent-filter apps found for the requested capability." else "Compatible apps: ${matches.joinToString(", ")}" 
-            return@withContext "{\"result\": \"$summary\"}"
+            val summary = if (matches.isEmpty()) "No compatible Android intent-filter apps found for the requested capability." else "Compatible apps: ${matches.joinToString(", ")}"
+            return@withContext JSONObject().put("result", summary).toString()
         }
 
         if (toolName == "list_skill_commands") {
@@ -379,7 +397,8 @@ open class ToolRegistry(
                 "summarize_history",
                 "plan_next_action"
             )
-            return@withContext "{\"result\": \"Available skill commands: ${skillNames.joinToString()}. The harness keeps a full history log for each command execution.\"}"
+            val result = "Available skill commands: ${skillNames.joinToString()}. The harness keeps a full history log for each command execution."
+            return@withContext JSONObject().put("result", result).toString()
         }
 
         if (toolName == "skill_agent_command") {
@@ -391,7 +410,11 @@ open class ToolRegistry(
             } else {
                 "Executed skill command '$command' with arguments ${commandArgs.toString()}. This action was recorded in session history."
             }
-            return@withContext "{\"result\": \"$summary\", \"command\": \"$command\", \"history_recorded\": true}"
+            return@withContext JSONObject()
+                .put("result", summary)
+                .put("command", command)
+                .put("history_recorded", true)
+                .toString()
         }
 
         if (toolName == "ask_human_for_input") {
@@ -402,48 +425,90 @@ open class ToolRegistry(
 
 
         if (toolName == "launch_app") {
-            val appName = JSONObject(jsonArgs).optString("app_name", "").lowercase()
-            
-            // Try an exact match first
-            var pkgName = toolRoutingTable["app_pkg_$appName"]
-            
-            // If exact match fails, try partial match (e.g. "gmail" matching "gmail app")
-            if (pkgName == null) {
+            val appNameRaw = JSONObject(jsonArgs).optString("app_name", "")
+            val appName = appNameRaw.lowercase().trim()
+            val normalized = normalizeAppName(appName)
+
+            val pm = context?.packageManager
+            var pkgName: String? = null
+
+            // 1. Exact label match (e.g. "gmail" -> "app_pkg_gmail")
+            pkgName = toolRoutingTable["app_pkg_$appName"]
+
+            // 2. Partial label match (e.g. "gmail" matching "gmail app")
+            if (pkgName == null && appName.isNotEmpty()) {
                 val match = toolRoutingTable.keys.firstOrNull { it.startsWith("app_pkg_") && it.contains(appName) }
-                if (match != null) {
-                    pkgName = toolRoutingTable[match]
-                }
+                pkgName = match?.let { toolRoutingTable[it] }
             }
-            
-            if (pkgName == null) return@withContext "{\"error\": \"App '$appName' not found on device.\"}"
-            
+
+            // 3. Package-name match (e.g. "com.google.android.gm" or a fragment of it)
+            if (pkgName == null && appName.isNotEmpty()) {
+                val match = toolRoutingTable.entries.firstOrNull { (key, value) ->
+                    val pkg = value.lowercase()
+                    key.startsWith("app_pkg_") && (pkg.contains(appName) || appName.contains(pkg))
+                }?.value
+                pkgName = match
+            }
+
+            // 4. Normalized match ignoring spaces/dashes/underscores (e.g. "play store" -> "playstore")
+            if (pkgName == null && normalized.isNotEmpty()) {
+                val match = toolRoutingTable.entries.firstOrNull { (key, value) ->
+                    key.startsWith("app_pkg_") && (
+                        normalizeAppName(key.removePrefix("app_pkg_")) == normalized ||
+                            normalizeAppName(value) == normalized ||
+                            normalizeAppName(value).contains(normalized) ||
+                            normalized.contains(normalizeAppName(value))
+                        )
+                }?.value
+                pkgName = match
+            }
+
+            // 5. Last resort: treat the raw input as a package name and ask the OS directly
+            if (pkgName == null && appNameRaw.isNotBlank()) {
+                val direct = try { pm?.getLaunchIntentForPackage(appNameRaw.trim()) } catch (_: Exception) { null }
+                if (direct != null) pkgName = appNameRaw.trim()
+            }
+
+            if (pkgName == null) {
+                // Return the available app list so a small LLM can self-correct on the next turn.
+                val available = toolRoutingTable.keys
+                    .filter { it.startsWith("app_pkg_") }
+                    .map { it.removePrefix("app_pkg_") }
+                    .take(30)
+                    .joinToString(", ")
+                return@withContext JSONObject()
+                    .put("error", "App '$appNameRaw' not found on device.")
+                    .put("available_apps", available)
+                    .put("hint", "Retry launch_app with an app_name from available_apps, or use send_android_intent.")
+                    .toString()
+            }
+
             // Optional Security Guard
             val isApproved = interactionManager?.requireIntentPermission(toolName, pkgName, "Launch app") ?: true
             if (!isApproved) {
-                return@withContext "{\"error\": \"User denied permission to launch $pkgName.\"}"
+                return@withContext JSONObject().put("error", "User denied permission to launch $pkgName.").toString()
             }
-            
-            val pm = context?.packageManager
+
             val launchIntent = pm?.getLaunchIntentForPackage(pkgName)
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context?.startActivity(launchIntent)
-                return@withContext "{\"result\": \"Successfully launched $pkgName\"}"
+                return@withContext JSONObject().put("result", "Successfully launched $pkgName").toString()
             } else {
-                return@withContext "{\"error\": \"Could not launch $pkgName. Intent not found.\"}"
+                return@withContext JSONObject().put("error", "Could not launch $pkgName. Intent not found.").toString()
             }
         }
 
-        val packageName = toolRoutingTable[toolName] 
-            ?: return@withContext "{\"error\": \"Tool $toolName not found in registry\"}"
-            
-        val boundService = boundServices[packageName] 
-            ?: return@withContext "{\"error\": \"Service $packageName disconnected\"}"
+        val packageName = toolRoutingTable[toolName]
+            ?: return@withContext JSONObject().put("error", "Tool $toolName not found in registry").toString()
+
+        val boundService = boundServices[packageName]
+            ?: return@withContext JSONObject().put("error", "Service $packageName disconnected").toString()
 
         // Security Guard: Hand over control to the human to approve this intent
         val isApproved = interactionManager?.requireIntentPermission(toolName, packageName, jsonArgs) ?: true
         if (!isApproved) {
-            return@withContext "{\"error\": \"User denied permission to execute this tool.\"}"
+            return@withContext JSONObject().put("error", "User denied permission to execute this tool.").toString()
         }
 
         val id = mcpRequestId.getAndIncrement()
@@ -457,107 +522,145 @@ open class ToolRegistry(
             })
         }
 
-        return@withContext suspendCancellableCoroutine { continuation ->
-            pendingRequests[id] = object : Continuation<JSONObject> {
-                override val context = continuation.context
-                override fun resumeWith(result: Result<JSONObject>) {
-                    if (result.isSuccess) {
-                        val response = result.getOrNull()
-                        if (response?.has("error") == true) {
-                            val error = response.getJSONObject("error").optString("message", "Unknown error")
-                            continuation.resume("{\"error\": \"$error\"}")
-                        } else if (response?.has("result") == true) {
-                            val toolResult = response.getJSONObject("result")
-                            if (toolResult.has("content")) {
-                                val contentArray = toolResult.getJSONArray("content")
-                                if (contentArray.length() > 0) {
-                                    val text = contentArray.getJSONObject(0).optString("text", "")
-                                    continuation.resume(text)
-                                    return
+        val response = withTimeoutOrNull(TOOL_CALL_TIMEOUT_MS) {
+            suspendCancellableCoroutine<String> { continuation ->
+                pendingRequests[id] = object : Continuation<JSONObject> {
+                    override val context = continuation.context
+                    override fun resumeWith(result: Result<JSONObject>) {
+                        if (result.isSuccess) {
+                            val response = result.getOrNull()
+                            if (response?.has("error") == true) {
+                                val error = response.getJSONObject("error").optString("message", "Unknown error")
+                                continuation.resume(JSONObject().put("error", error).toString())
+                            } else if (response?.has("result") == true) {
+                                val toolResult = response.getJSONObject("result")
+                                if (toolResult.has("content")) {
+                                    val contentArray = toolResult.getJSONArray("content")
+                                    if (contentArray.length() > 0) {
+                                        val text = contentArray.getJSONObject(0).optString("text", "")
+                                        continuation.resume(text)
+                                        return
+                                    }
                                 }
+                                continuation.resume(toolResult.toString())
+                            } else {
+                                continuation.resume(JSONObject().put("error", "Invalid response format").toString())
                             }
-                            continuation.resume(toolResult.toString())
                         } else {
-                            continuation.resume("{\"error\": \"Invalid response format\"}")
+                            continuation.resumeWithException(result.exceptionOrNull() ?: Exception("Unknown error"))
                         }
-                    } else {
-                        continuation.resumeWithException(result.exceptionOrNull() ?: Exception("Unknown error"))
                     }
                 }
-            }
-            
-            try {
-                boundService.service.sendMcpMessage(request.toString())
-            } catch (e: Exception) {
-                pendingRequests.remove(id)
-                continuation.resumeWithException(e)
+
+                continuation.invokeOnCancellation { pendingRequests.remove(id) }
+
+                try {
+                    boundService.service.sendMcpMessage(request.toString())
+                } catch (e: Exception) {
+                    pendingRequests.remove(id)
+                    continuation.resumeWithException(e)
+                }
             }
         }
+
+        return@withContext response
+            ?: JSONObject().put("error", "Tool $toolName timed out after ${TOOL_CALL_TIMEOUT_MS}ms").toString()
     }
 
     fun unbindAll() {
-        boundServices.values.forEach { 
+        boundServices.values.forEach {
             try {
                 it.service.unregisterCallback(it.callback)
             } catch (e: Exception) {}
-            context?.unbindService(it.connection) 
+            try {
+                context?.unbindService(it.connection)
+            } catch (e: Exception) {
+                // Service may already be unbound (e.g. after onServiceDisconnected).
+            }
         }
         boundServices.clear()
         toolRoutingTable.clear()
     }
 
+    /**
+     * Maps a free-form capability hint (e.g. "read_mail", "send_email", "view_web")
+     * to the concrete Android intent actions/data that apps must handle to provide it.
+     * Capability names never appear inside app labels, so substring matching cannot work;
+     * resolving actual intents is the reliable way to find capable apps.
+     */
+    private fun capabilityToQueryIntents(capability: String): List<Intent> {
+        val c = normalizeAppName(capability)
+        return when {
+            c.contains("mail") || c.contains("email") -> listOf(
+                Intent(Intent.ACTION_SENDTO).apply { data = android.net.Uri.parse("mailto:") },
+                Intent(Intent.ACTION_SEND).apply { type = "text/plain" },
+                Intent(Intent.ACTION_VIEW).apply { data = android.net.Uri.parse("mailto:") }
+            )
+            c.contains("web") || c.contains("browser") || c.contains("url") || c.contains("http") -> listOf(
+                Intent(Intent.ACTION_VIEW).apply { data = android.net.Uri.parse("http://www.example.com") },
+                Intent(Intent.ACTION_WEB_SEARCH)
+            )
+            c.contains("dial") || c.contains("call") || c.contains("phone") -> listOf(
+                Intent(Intent.ACTION_DIAL).apply { data = android.net.Uri.parse("tel:") }
+            )
+            c.contains("search") || c.contains("find") -> listOf(
+                Intent(Intent.ACTION_WEB_SEARCH),
+                Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }
+            )
+            c.contains("openapp") || c.contains("launchapp") || c.contains("startapp") || c.contains("app") -> listOf(
+                Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+            )
+            c.contains("share") || c.contains("send") -> listOf(
+                Intent(Intent.ACTION_SEND).apply { type = "text/plain" },
+                Intent(Intent.ACTION_SEND_MULTIPLE).apply { type = "*/*" }
+            )
+            c.contains("image") || c.contains("photo") || c.contains("picture") || c.contains("pick") -> listOf(
+                Intent(Intent.ACTION_PICK).apply { type = "image/*" },
+                Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
+            )
+            c.contains("text") || c.contains("process") || c.contains("edit") -> listOf(
+                Intent(Intent.ACTION_PROCESS_TEXT).apply { type = "text/plain" },
+                Intent(Intent.ACTION_EDIT).apply { type = "text/plain" }
+            )
+            c.contains("assist") -> listOf(
+                Intent(Intent.ACTION_ASSIST)
+            )
+            else -> emptyList()
+        }
+    }
+
     private fun discoverCompatibleIntentApps(capabilityHints: List<String>): List<String> {
         val pm = context?.packageManager ?: return emptyList()
-        val normalized = capabilityHints.map { it.lowercase() }
-        val appNames = linkedSetOf<String>()
+        val matches = linkedSetOf<String>()
 
-        for (action in discoveryIntentActions()) {
-            val intent = if (action == Intent.ACTION_MAIN) {
-                Intent(action).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
-            } else {
-                Intent(action).apply { addCategory(Intent.CATEGORY_DEFAULT) }
-            }
+        // Resolve the concrete intents implied by the requested capabilities.
+        val queries = capabilityHints.flatMap { capabilityToQueryIntents(it) }
 
+        // No (or unknown) hints: fall back to the launcher grid so the caller still gets a useful list.
+        val effectiveQueries = queries.ifEmpty {
+            listOf(Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) })
+        }
+
+        for (intent in effectiveQueries) {
             val resolveInfos = try {
                 pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
             } catch (_: Exception) {
                 emptyList()
             }
-
             for (resolveInfo in resolveInfos) {
-                val pkgName = resolveInfo.activityInfo.packageName
-                val title = resolveInfo.loadLabel(pm).toString().trim()
-                if (title.isNotEmpty()) {
-                    appNames += if (normalized.isEmpty()) title else {
-                        val lower = title.lowercase()
-                        if (normalized.any { lower.contains(it) || it.contains(lower) }) title else title
-                    }
-                }
-                if (pkgName.isNotBlank()) appNames += pkgName
-            }
-
-            val services = try {
-                pm.queryIntentServices(intent, PackageManager.MATCH_ALL)
-            } catch (_: Exception) {
-                emptyList()
-            }
-            for (resolveInfo in services) {
-                val pkgName = resolveInfo.serviceInfo.packageName
-                val title = resolveInfo.loadLabel(pm).toString().trim()
-                if (title.isNotEmpty()) appNames += title
-                if (pkgName.isNotBlank()) appNames += pkgName
+                val pkgName = resolveInfo.activityInfo?.packageName ?: continue
+                if (pkgName == context?.packageName) continue
+                val title = try { resolveInfo.loadLabel(pm).toString().trim() } catch (_: Exception) { "" }
+                if (title.isNotEmpty()) matches += "$title ($pkgName)" else matches += pkgName
             }
         }
 
-        return appNames
-            .filter { appName ->
-                if (normalized.isEmpty()) true else normalized.any { hint ->
-                    appName.lowercase().contains(hint) || hint.contains(appName.lowercase())
-                }
-            }
-            .distinct()
-            .take(20)
+        return matches.toList().take(20)
     }
+
+    /** Lowercases and strips separators so "Play Store", "play_store" and "playstore" all compare equal. */
+    private fun normalizeAppName(name: String): String =
+        name.lowercase().trim().replace(Regex("[\\s_\\-]"), "")
 
     private fun isUserInstalledApp(packageName: String): Boolean {
         val pm = context?.packageManager ?: return false

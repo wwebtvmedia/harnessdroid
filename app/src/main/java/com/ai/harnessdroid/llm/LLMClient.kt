@@ -99,14 +99,18 @@ open class LLMClient(private val context: Context?) {
                 val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json")
+                // Explicit timeouts: the JDK defaults are infinite, so a stalled provider
+                // would hang the AgentLoop forever.
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 120_000
                 if (config.customApiKey.isNotEmpty()) {
                     connection.setRequestProperty("Authorization", "Bearer ${config.customApiKey}")
                 }
                 connection.doOutput = true
 
-                // Simple JSON payload structure, could vary by API Type
+                // OpenAI-compatible chat payload; the model name is user-configurable.
                 val payload = org.json.JSONObject().apply {
-                    put("model", "custom-model")
+                    put("model", config.customModel)
                     put("messages", org.json.JSONArray().apply {
                         put(org.json.JSONObject().apply {
                             put("role", "user")

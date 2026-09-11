@@ -16,24 +16,28 @@ interface HumanInteractionHandler {
 }
 
 class InteractionManager(private val handler: HumanInteractionHandler) {
-    
-    // Whitelist of already approved tool intents so the user isn't pestered repeatedly
+
+    // Whitelist of already approved (tool, target package) pairs so the user isn't pestered
+    // repeatedly — while still being asked again before the agent touches a different app.
     private val allowedTools = mutableSetOf<String>()
 
     /**
-     * Called before the ToolRegistry executes an Intent. 
-     * If the tool is not in the whitelist, it "takes the hand" and waits for user approval.
+     * Called before the ToolRegistry executes an Intent.
+     * If the (tool, package) pair is not in the whitelist, it "takes the hand" and waits
+     * for user approval. Approving 'launch_app' for Gmail does NOT auto-approve launching
+     * any other app.
      */
     suspend fun requireIntentPermission(toolName: String, intentPackage: String, arguments: String): Boolean {
-        if (allowedTools.contains(toolName)) {
+        val key = "$toolName:$intentPackage"
+        if (allowedTools.contains(key)) {
             return true
         }
-        
+
         val reason = "The agent wants to execute '$toolName' in app '$intentPackage'. This intent is not yet allowed."
         val approved = handler.askForPermission(toolName, intentPackage, reason)
-        
+
         if (approved) {
-            allowedTools.add(toolName)
+            allowedTools.add(key)
         }
         return approved
     }

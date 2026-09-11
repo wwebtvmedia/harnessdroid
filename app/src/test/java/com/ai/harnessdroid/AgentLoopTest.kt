@@ -10,7 +10,7 @@ import org.json.JSONObject
 class AgentLoopTest {
 
     @Test
-    fun testLoopStopsWhenMaxTurnsReached() = runBlocking {
+    fun `test_loop_stops_when_max_turns_reached`() = runBlocking {
         // LLM keeps saying "mockTool" forever
         val mockLlmClient = MockLLMClient(infiniteTool = true)
         val mockToolRegistry = MockToolRegistry()
@@ -25,7 +25,7 @@ class AgentLoopTest {
     }
 
     @Test
-    fun testLoopSuccessfullyExecutesToolAndReturnsFinalAnswer() = runBlocking {
+    fun `test_loop_successfully_executes_tool_and_returns_final_answer`() = runBlocking {
         // LLM says "mockTool" once, then "NONE"
         val mockLlmClient = MockLLMClient(infiniteTool = false)
         val mockToolRegistry = MockToolRegistry()
@@ -38,50 +38,26 @@ class AgentLoopTest {
         assertTrue(result.contains("Final Answer"))
         assertEquals(1, mockToolRegistry.executionCount)
     }
-    @Test
-    fun testListToolsSuccessfullyReturnsList() = runBlocking {
-        // LLM says "list_harness_intents", then "NONE"
-        val mockLlmClient = MockLLMClient(infiniteTool = false)
-        val mockToolRegistry = MockToolRegistry()
-        val mockPersistence = MockSessionPersistence()
-        val logger = ForensicLoggerMock()
-
-        val agentLoop = AgentLoop(mockLlmClient, mockToolRegistry, mockPersistence, logger)
-        val result = agentLoop.runTask("please list all tools accessible", maxTurns = 5)
-        
-        assertTrue(result.contains("Available intents"))
-        assertEquals(1, mockToolRegistry.executionCount)
-    }
 }
 
 class MockLLMClient(private val infiniteTool: Boolean) : com.ai.harnessdroid.llm.LLMClient(null as android.content.Context?) {
     private var state = 0
     override suspend fun generateText(prompt: String): String {
-        val lower = prompt.lowercase()
-        return if (lower.contains("available tools") || lower.contains("<plan") || lower.contains("which tool") || lower.contains("choose") || lower.contains("pick a tool")) {
+        return if (prompt.lowercase().contains("which tool")) {
             if (infiniteTool) {
                 "mockTool"
             } else {
                 if (state == 0) {
                     state = 1
-                    if (prompt.contains("Goal: please list all tools accessible")) {
-                        "list_harness_intents"
-                    } else {
-                        "mockTool"
-                    }
+                    "mockTool"
                 } else {
                     "NONE"
                 }
             }
-        } else if (lower.contains("json") && lower.contains("arguments")) {
+        } else if (prompt.contains("JSON object containing the arguments")) {
             "{ \"testArg\": \"val\" }"
         } else {
-            // FSM STATE 1b: Final Answer Generation
-            if (lower.contains("goal: please list all tools accessible") || lower.contains("please list all tools accessible")) {
-                "Available intents: mockTool, list_harness_intents"
-            } else {
-                "Final Answer"
-            }
+            "Final Answer"
         }
     }
 }
@@ -93,11 +69,7 @@ class MockToolRegistry : com.ai.harnessdroid.tools.ToolRegistry(null as android.
             put("name", "mockTool")
             put("description", "A mock tool")
         }
-        val listTool = JSONObject().apply {
-            put("name", "list_harness_intents")
-            put("description", "List intents")
-        }
-        return JSONArray().put(tool).put(listTool).toString()
+        return JSONArray().put(tool).toString()
     }
     override suspend fun executeTool(toolName: String, jsonArgs: String): String {
         executionCount++

@@ -19,13 +19,19 @@ class IntegrationTest {
         val toolRegistry = ToolRegistry(appContext, null)
         val discoveredTools = toolRegistry.discoverAndBindTools()
         
-        assertTrue("Tools should include web_search", discoveredTools.contains("web_search"))
+        // The mock web_search tool was removed from the registry on purpose;
+        // real capabilities are discovered from installed apps via standard intents.
+        assertTrue("Tools should include launch_app", discoveredTools.contains("launch_app"))
+        assertTrue("Tools should include send_android_intent", discoveredTools.contains("send_android_intent"))
         assertTrue("Tools should include ask_human_for_input", discoveredTools.contains("ask_human_for_input"))
         assertTrue("Tools should include get_os_info", discoveredTools.contains("get_os_info"))
-        
-        val result = toolRegistry.executeTool("web_search", """{"query": "Integration Test"}""")
-        assertTrue("Result should contain mock search result", result.contains("mock search result"))
-        
+
+        val launch = toolRegistry.executeTool(
+            "launch_app",
+            org.json.JSONObject().put("app_name", "Gmail").toString()
+        )
+        assertTrue("Result should confirm the launch", launch.contains("Successfully launched"))
+
         val osInfo = toolRegistry.executeTool("get_os_info", "{}")
         assertTrue("Should return OS info", osInfo.contains("Android API"))
         

@@ -21,4 +21,10 @@ class LLMConfigManager(context: Context) {
     var customApiType: String
         get() = prefs.getString("custom_api_type", "OpenAI") ?: "OpenAI"
         set(value) = prefs.edit().putString("custom_api_type", value).apply()
+
+    // Model name sent in the OpenAI-compatible payload. Providers like OpenAI, DeepSeek or
+    // Groq reject unknown models, so this must be configurable instead of hardcoded.
+    var customModel: String
+        get() = prefs.getString("custom_model", "custom-model") ?: "custom-model"
+        set(value) = prefs.edit().putString("custom_model", value).apply()
 }

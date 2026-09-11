@@ -23,7 +23,8 @@ class AgentLoop(
 ) {
     private val TAG = "AgentLoop"
     private var sessionLog = mutableListOf<SessionEvent>()
-    // Compression and mitigation configuration (can be toggled via env vars)
+    // Compression and mitigation configuration. Read from env vars so JVM unit tests can
+    // override them; on a real Android process these always resolve to the defaults.
     private val MAX_CONTEXT_CHARS = (System.getenv("HARNESS_MAX_CONTEXT_CHARS") ?: "3000").toInt()
     private val COMPRESSION_STRATEGY = System.getenv("HARNESS_COMPRESSION_STRATEGY") ?: "ach" // options: single, ach
     private val USE_MOCK_LLM = (System.getenv("HARNESS_USE_MOCK_LLM") ?: "0") == "1"
@@ -104,7 +105,12 @@ class AgentLoop(
                 val elapsed = System.currentTimeMillis() - startMs
                 forensicLogger.logEvent("CONTEXT_COMPRESSION_RESULT", "Compressed length ${compressed.length}, elapsed_ms=$elapsed")
                 contextStr = "<COMPRESSED_HISTORY>\n$compressed\n</COMPRESSED_HISTORY>"
-                // record the compression action
+                // Elide the history: keep the original user request, replace everything else
+                // with the summary. Without elision the summaries accumulate and every turn
+                // re-compresses an ever-growing log.
+                val originalRequest = sessionLog.firstOrNull { it.role == "user" }
+                sessionLog = mutableListOf()
+                originalRequest?.let { sessionLog.add(it) }
                 sessionLog.add(SessionEvent("system", "CompressedConversationSummary: $compressed"))
                 sessionPersistence.flushLog(sessionLog)
             }
@@ -267,10 +273,13 @@ Do NOT output any other text or explanation.
         }
 
         // Check if NONE is the intended action (e.g. at the end of the output or before </plan>)
-        if (lowerOut.endsWith("none") || lowerOut == "none" || lowerOut.contains("none\n</plan>") || lowerOut.contains("\nnone\n") || lowerOut.contains("none</plan>")) {
+        val lastLine = trimmed.lines().lastOrNull { it.isNotBlank() }?.lowercase()?.trim() ?: ""
+        val lastLineAlpha = lastLine.replace(Regex("[^a-z]"), "")
+        if (lowerOut.endsWith("none") || lowerOut == "none" || lastLineAlpha == "none" ||
+            lowerOut.contains("none\n</plan>") || lowerOut.contains("\nnone\n") || lowerOut.contains("none</plan>")) {
             return "NONE"
         }
-        
+
         // Fallback: Check if they mentioned the tool name ANYWHERE in the output despite instructions
         for (i in 0 until toolsArray.length()) {
             val name = toolsArray.getJSONObject(i).optString("name")
@@ -279,13 +288,9 @@ Do NOT output any other text or explanation.
             }
         }
 
-        // If still no match, conservatively select the first available tool instead of NONE
-        // This helps tests and reduces dead-paths where the LLM output didn't follow
-        // the exact trigger phrase but still intended to invoke a tool.
-        if (toolsArray.length() > 0) {
-            return toolsArray.getJSONObject(0).optString("name")
-        }
-
+        // If still no match, be conservative and return NONE (final-answer path) instead of
+        // executing an arbitrary tool. The old "first available tool" fallback forced unwanted
+        // tool executions in production whenever the LLM output went off-format.
         return "NONE"
     }
     
@@ -332,12 +337,23 @@ Do NOT output any other text or explanation.
 
         forensicLogger.logEvent("FILTER_START", "Filtering tools for preference: $preferredRaw")
 
+        // Core generic tools stay visible regardless of capability hints: a small LLM that
+        // changes strategy mid-task must still be able to launch an app or send an intent.
+        val coreTools = setOf(
+            "launch_app", "send_android_intent", "list_installed_apps",
+            "list_compatible_intent_apps", "get_os_info", "ask_human_for_input"
+        )
+
         val tokens = preferred.split(Regex("\\s+|[,\\-]"))
         val out = JSONArray()
         for (i in 0 until toolsArray.length()) {
             val t = toolsArray.getJSONObject(i)
             val name = t.optString("name", "").lowercase()
             val desc = t.optString("description", "").lowercase()
+            if (name in coreTools) {
+                out.put(t)
+                continue
+            }
             var matched = false
             for (tok in tokens) {
                 if (tok.isBlank()) continue

@@ -22,11 +22,16 @@ data class PermissionRequest(
     val reason: String
 )
 
+data class InputRequest(
+    val id: String,
+    val prompt: String
+)
+
 class HarnessService : Service(), HumanInteractionHandler {
 
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
-    
+
     private val _uiState = MutableStateFlow<List<SessionEvent>>(emptyList())
     val uiState: StateFlow<List<SessionEvent>> = _uiState.asStateFlow()
 
@@ -35,8 +40,14 @@ class HarnessService : Service(), HumanInteractionHandler {
     val forensicState: StateFlow<List<String>> = _forensicState.asStateFlow()
 
     val permissionRequests = MutableSharedFlow<PermissionRequest>(extraBufferCapacity = 1)
-    
+    val inputRequests = MutableSharedFlow<InputRequest>(extraBufferCapacity = 1)
+
     private val permissionResponses = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<Boolean>>()
+    private val inputResponses = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<String>>()
+
+    // Only one agent task may run at a time: concurrent tasks would corrupt the shared
+    // session log and tool registry state.
+    private val taskRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private lateinit var agentLoop: AgentLoop
     private lateinit var forensicLogger: ForensicLogger
@@ -85,14 +96,22 @@ class HarnessService : Service(), HumanInteractionHandler {
     }
 
     fun startTask(request: String) {
+        if (!taskRunning.compareAndSet(false, true)) {
+            forensicLogger.logEvent("TASK_REJECTED", "A task is already running; new request ignored: $request")
+            return
+        }
         forensicLogger.logEvent("TASK_START", "Received user request: $request")
         scope.launch {
-            val currentLog = sessionPersistence.loadLog()
-            currentLog.add(SessionEvent("user", request))
-            sessionPersistence.flushLog(currentLog)
+            try {
+                val currentLog = sessionPersistence.loadLog()
+                currentLog.add(SessionEvent("user", request))
+                sessionPersistence.flushLog(currentLog)
 
-            val result = agentLoop.runTask(request)
-            forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
+                val result = agentLoop.runTask(request)
+                forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
+            } finally {
+                taskRunning.set(false)
+            }
         }
     }
 
@@ -110,12 +129,26 @@ class HarnessService : Service(), HumanInteractionHandler {
     }
 
     override suspend fun askUserForInput(prompt: String): String {
-        return "User input not implemented in this mock"
+        forensicLogger.logEvent("INPUT_ASK", "Requesting user input: $prompt")
+        val requestId = java.util.UUID.randomUUID().toString()
+        val deferred = kotlinx.coroutines.CompletableDeferred<String>()
+        inputResponses[requestId] = deferred
+
+        inputRequests.emit(InputRequest(requestId, prompt))
+
+        val reply = deferred.await()
+        forensicLogger.logEvent("INPUT_RESPONSE", "User replied: $reply")
+        return reply
     }
 
     fun providePermissionResponse(requestId: String, approved: Boolean) {
         permissionResponses[requestId]?.complete(approved)
         permissionResponses.remove(requestId)
+    }
+
+    fun provideInputResponse(requestId: String, text: String) {
+        inputResponses[requestId]?.complete(text)
+        inputResponses.remove(requestId)
     }
 
     private fun createNotification(): Notification {
@@ -137,6 +170,8 @@ class HarnessService : Service(), HumanInteractionHandler {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Release the binder connections to third-party tool providers.
+        toolRegistry.unbindAll()
         job.cancel()
     }
 }
