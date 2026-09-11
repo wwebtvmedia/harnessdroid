@@ -68,9 +68,9 @@ ui_autopilot() {
   # fires until they are answered, so answer them automatically:
   #  - "The agent has a question": tap the answer field, type a generic answer,
   #    then confirm. Never send ESC/BACK here: the typed text only commits to
-  #    the Compose field when "Answer" is pressed, and ESC would dismiss the
-  #    dialog with an empty reply. The button sits above the IME, so tapping it
-  #    while the keyboard is open works.
+  #    the Compose field when the confirm button is pressed, and ESC would
+  #    dismiss the dialog with an empty reply. The buttons sit above the IME,
+  #    so tapping them while the keyboard is open works.
   #  - tool permission popup: Allow
   local dump
   adb -s "$DEVICE" shell uiautomator dump /sdcard/ps_ui_dump.xml >/dev/null 2>&1
@@ -85,7 +85,8 @@ ui_autopilot() {
         adb -s "$DEVICE" shell input text "Use%sthe%sappropriate%stool."
         sleep 1
       fi
-      tap_text "Answer" || true
+      # v1.1.5 dialog confirms with "Submit" (older builds used "Answer").
+      tap_text "Submit" || tap_text "Answer" || true
       ;;
     *Allow*)
       echo "  [autopilot] approving tool permission..." >&2
@@ -102,7 +103,7 @@ dismiss_dialogs() {
   dump=$(adb -s "$DEVICE" shell cat /sdcard/ps_ui_dump.xml 2>/dev/null || true)
   adb -s "$DEVICE" shell rm -f /sdcard/ps_ui_dump.xml
   case "$dump" in
-    *"The agent has a question"*) tap_text "Skip" ;;
+    *"The agent has a question"*) tap_text "Ignore" || tap_text "Skip" ;;
     *Allow*) tap_dump_text "$dump" "Deny" || true ;;
   esac
   sleep 1
