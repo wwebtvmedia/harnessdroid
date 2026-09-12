@@ -171,9 +171,29 @@ Configuration requise : Android 13+ recommandé pour de meilleures performances 
 
 ---
 
-## Notes de version 1.2.2 (champ « What's new » / Actualités) — prêt à coller
+## Notes de version 1.2.3 (champ « What's new » / Actualités) — prêt à coller
 
-### Anglais (en-US), 381 caractères (max 500)
+### Anglais (en-US), 391 caractères (max 500)
+
+```
+New in 1.2.3:
+• Context persists across requests: follow-up questions keep earlier results, tool outputs and plan details until you press Clear.
+• Clear wipes the transcript, history vectors and embedder state in one tap; saved memories are kept.
+• Verified end-to-end with local GGUF models and remote OpenAI-compatible endpoints on phone and tablet.
+• Bug fixes and stability improvements.
+```
+
+### Français (fr-FR), 422 caractères (max 500)
+
+```
+Nouveautés 1.2.3 :
+• Le contexte persiste entre les requêtes : les questions de suivi conservent les résultats et sorties d'outils précédents jusqu'à l'appui sur Effacer.
+• Effacer purge transcript, vecteurs d'historique et état de l'embedder d'un seul appui ; les mémoires enregistrées sont conservées.
+• Validé de bout en bout avec modèles GGUF locaux et endpoints compatibles OpenAI.
+• Correctifs et gains de stabilité.
+```
+
+### Notes de version 1.2.2 (archivées)
 
 ```
 New in 1.2.2:
@@ -182,8 +202,6 @@ New in 1.2.2:
 • Verified against remote Ollama endpoints.
 • Bug fixes and stability improvements.
 ```
-
-### Français (fr-FR), 414 caractères (max 500)
 
 ```
 Nouveautés 1.2.2 :
