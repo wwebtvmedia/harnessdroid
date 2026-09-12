@@ -84,7 +84,7 @@ class MemoryService(
         val prompt = """
 <SYSTEM>
 You extract durable user facts worth remembering across sessions (preferences, identity, environment, recurring goals).
-From the transcript below, output ONLY a JSON array of up to 5 short fact strings (max 15 words each).
+From the transcript below, output ONLY a JSON array of up to 5 short fact strings in English (max 15 words each).
 If there is nothing worth remembering, output [].
 Example: ["The user prefers concise answers","The device is a Samsung tablet"]
 </SYSTEM>

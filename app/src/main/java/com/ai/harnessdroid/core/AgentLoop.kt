@@ -118,7 +118,7 @@ class AgentLoop(
         forensicLogger.logEvent("GENERAL_QUESTION_START", "Asking LLM if a clarifying question is needed.")
         val generalQuestionPrompt = """
     <SYSTEM>
-    You are an AI assistant. Given the task below, if you need a short clarifying question to pick the best tool, output that question only. If no clarification is needed, output NO_QUESTION.
+    You are an AI assistant. Given the task below, if you need a short clarifying question to pick the best tool, output that question only, in English. If no clarification is needed, output NO_QUESTION.
     </SYSTEM>
 
     <TASK>
@@ -235,6 +235,7 @@ RULES:
 - You must write your step-by-step plan inside a <PLAN> block.
 - As the final line INSIDE your <PLAN> block, you MUST output exactly: harness have to use <tool_name>
 - If you have enough information to answer the user directly without a tool, output: NONE inside the <PLAN> block.
+- Always respond in English, regardless of the language of the conversation history.
 
 EXAMPLE OUTPUT FORMAT:
 <PLAN>
@@ -273,7 +274,7 @@ You have access to the following tools via the harness:
 $toolSummaryList
 
 Review the CONVERSATION HISTORY below to see the results from any tools you used.
-Synthesize these results and provide the final answer to the user in their preferred language.
+Synthesize these results and provide the final answer to the user in English, regardless of the language of the conversation history.
 If the user asks about your tools or capabilities, list them based on the tools above.
 Do NOT talk about needing or not needing tools. Just answer the user directly.
 </SYSTEM>
@@ -548,7 +549,7 @@ Do NOT output any other text or explanation.
     private suspend fun performSingleCompression(contextStr: String): String = withContext(Dispatchers.IO) {
         val compressionPrompt = """
 <SYSTEM>
-You are an assistant tasked with compressing a conversation history for an autonomous agent. Produce a short concise summary (max 600 characters) that preserves important facts, tool outputs, and unresolved user goals. Output only the compressed summary.
+You are an assistant tasked with compressing a conversation history for an autonomous agent. Produce a short concise summary in English (max 600 characters) that preserves important facts, tool outputs, and unresolved user goals. Output only the compressed summary.
 </SYSTEM>
 
 <CONVERSATION_HISTORY>
@@ -573,7 +574,7 @@ $contextStr
             val chunk = contextStr.substring(start, end)
             val chunkPrompt = """
 <SYSTEM>
-Compress the following conversation chunk into a short summary (max 300 characters) preserving facts and tool outputs. Output only the summary.
+Compress the following conversation chunk into a short summary in English (max 300 characters) preserving facts and tool outputs. Output only the summary.
 </SYSTEM>
 
 <CHUNK>
