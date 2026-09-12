@@ -83,8 +83,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   git config user.name "HarnessDroid" >/dev/null 2>&1 || true
   git config user.email "harnessdroid@local" >/dev/null 2>&1 || true
   git add app/build.gradle.kts
-  git commit -m "Release v${new_version_name} for Google Play" \
-    -m "Co-Authored-By: Claude <noreply@anthropic.com>" || echo "No commit created (nothing changed or commit aborted)."
+  git commit -m "Release v${new_version_name} for Google Play" || echo "No commit created (nothing changed or commit aborted)."
   if git remote get-url "$REMOTE_PATH" >/dev/null 2>&1; then
     git push "$REMOTE_PATH" HEAD
   else
