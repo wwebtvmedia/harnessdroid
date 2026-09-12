@@ -171,9 +171,29 @@ Configuration requise : Android 13+ recommandé pour de meilleures performances 
 
 ---
 
-## Notes de version 1.2.0 (champ « What's new » / Actualités) — prêt à coller
+## Notes de version 1.2.1 (champ « What's new » / Actualités) — prêt à coller
 
-### Anglais (en-US), 497 caractères (max 500)
+### Anglais (en-US), 322 caractères (max 500)
+
+```
+New in 1.2.1:
+• Fresh start for every request: the previous request's transcript and history vectors are purged, so old context no longer leaks into new tasks.
+• Memories you explicitly saved are kept.
+• Fixed connections to local/remote OpenAI-compatible endpoints over plain http.
+• Bug fixes and stability improvements.
+```
+
+### Français (fr-FR), 365 caractères (max 500)
+
+```
+Nouveautés 1.2.1 :
+• Nouveau départ à chaque requête : le transcript et les vecteurs d'historique de la requête précédente sont purgés — plus aucune fuite de contexte entre tâches.
+• Les faits que vous avez explicitement mémorisés sont conservés.
+• Connexions corrigées vers les endpoints OpenAI-compatibles locaux/dists en http.
+• Correctifs et gains de stabilité.
+```
+
+### Notes de version 1.2.0 (archivées)
 
 ```
 New in 1.2.0:
@@ -181,16 +201,6 @@ New in 1.2.0:
 • Embeddings-powered context: long task histories are compressed into vectors and reinjected into the model's embedding space, with automatic fallback to the text path.
 • Works with Tree4Five GGUF 1.1.0+ (required for embeddings).
 • Bug fixes and stability improvements.
-```
-
-### Français (fr-FR), 493 caractères (max 500)
-
-```
-Nouveautés 1.2.0 :
-• Mémoire long terme : dites « Retiens que je préfère les réponses concises » — vos préférences sont enregistrées sur l'appareil sous forme d'embeddings et rappelées dans les tâches suivantes. Gestion depuis le panneau Mémoire.
-• Contexte par embeddings : les historiques longs sont compressés en vecteurs et réinjectés dans le modèle, avec repli automatique vers le texte.
-• Compatible Tree4Five GGUF 1.1.0+ (requis pour les embeddings).
-• Correctifs et gains de stabilité.
 ```
 
 ---
