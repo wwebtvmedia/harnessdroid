@@ -86,6 +86,9 @@ class AgentLoop(
     }
 
     suspend fun runTask(taskInstruction: String, maxTurns: Int = 10): String = withContext(Dispatchers.IO) {
+        // The session was purged before this task started (HarnessService),
+        // so the embedder's ingest cursor must restart from zero too.
+        contextEmbedder = null
         forensicLogger.logEvent("LOOP_INIT", "Discovering tools...")
         val toolSchemasRaw = toolRegistry.discoverAndBindTools()
         val toolsArray = try { JSONArray(toolSchemasRaw) } catch (e: Exception) { JSONArray() }

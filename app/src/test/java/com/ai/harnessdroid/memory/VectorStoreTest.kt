@@ -42,6 +42,30 @@ class VectorStoreTest {
     }
 
     @Test
+    fun purgeKindDropsOnlyThatKindAndPersists() = runBlocking {
+        val dir = tmp.newFolder()
+        val store = VectorStore(dir, "qwen0.5b")
+        store.ingest("event one", mixed(100, 10), kind = "history")
+        store.ingest("event two", mixed(-100, 5), kind = "history")
+        store.ingest("a durable fact", mixed(90, -80), kind = "memory")
+        assertEquals(3, store.size)
+
+        // Purging history keeps durable facts and reports the count.
+        assertEquals(2, store.purgeKind("history"))
+        assertEquals(1, store.size)
+        assertEquals(listOf("a durable fact"), store.allEntries().map { it.text })
+
+        // Purging again is a no-op; purging an absent kind returns 0.
+        assertEquals(0, store.purgeKind("history"))
+        assertEquals(0, store.purgeKind("nonexistent"))
+
+        // The purge is persisted: a fresh store on the same folder must not
+        // resurrect the dropped entries.
+        val reloaded = VectorStore(dir, "qwen0.5b")
+        assertEquals(1, reloaded.size)
+    }
+
+    @Test
     fun nearDuplicateVectorsAreSkipped() = runBlocking {
         val store = VectorStore(tmp.newFolder(), "qwen0.5b")
         assertTrue(store.ingest("first", vector(1f), kind = "history"))

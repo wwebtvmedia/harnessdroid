@@ -129,9 +129,16 @@ class HarnessService : Service(), HumanInteractionHandler {
         forensicLogger.logEvent("TASK_START", "Received user request: $request")
         scope.launch {
             try {
-                val currentLog = sessionPersistence.loadLog()
-                currentLog.add(SessionEvent("user", request))
-                sessionPersistence.flushLog(currentLog)
+                // A new request starts from a clean slate: the previous
+                // request's transcript and history vectors must not leak
+                // into this task's prompts. Durable user facts (kind=memory)
+                // survive by design.
+                val previous = sessionPersistence.loadLog()
+                sessionPersistence.clearLog()
+                val droppedVectors = vectorStore?.purgeKind("history") ?: 0
+                forensicLogger.logEvent("SESSION_PURGED", "dropped ${previous.size} session events, $droppedVectors history vectors")
+
+                sessionPersistence.flushLog(listOf(SessionEvent("user", request)))
 
                 val result = agentLoop.runTask(request)
                 forensicLogger.logEvent("TASK_END", "Task completed with result: $result")

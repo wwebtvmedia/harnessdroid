@@ -190,6 +190,21 @@ class VectorStore(
         }
     }
 
+    /**
+     * Drops every entry of [kind] (e.g. the previous request's "history"
+     * vectors) and persists immediately. Returns how many were removed.
+     * Other kinds — durable user facts ("memory") — are left untouched.
+     */
+    suspend fun purgeKind(kind: String): Int = withContext(Dispatchers.IO) { mutex.withLock {
+        val removed = synchronized(entries) {
+            val before = entries.size
+            entries.removeAll { it.kind == kind }
+            before - entries.size
+        }
+        if (removed > 0) flushLocked()
+        removed
+    } }
+
     private fun flushLocked() {
         try {
             val snapshot = synchronized(entries) { ArrayList(entries) }
