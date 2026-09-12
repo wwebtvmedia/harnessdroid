@@ -171,9 +171,29 @@ Configuration requise : Android 13+ recommandé pour de meilleures performances 
 
 ---
 
-## Notes de version 1.2.1 (champ « What's new » / Actualités) — prêt à coller
+## Notes de version 1.2.2 (champ « What's new » / Actualités) — prêt à coller
 
-### Anglais (en-US), 322 caractères (max 500)
+### Anglais (en-US), 381 caractères (max 500)
+
+```
+New in 1.2.2:
+• Reliable English replies: every agent prompt (planning, clarification questions, final answers) now tells the model to answer in English, so remote OpenAI-compatible models no longer drift to their own default language.
+• Memory extraction and history summaries are in English too.
+• Verified against remote Ollama endpoints.
+• Bug fixes and stability improvements.
+```
+
+### Français (fr-FR), 414 caractères (max 500)
+
+```
+Nouveautés 1.2.2 :
+• Réponses fiables en anglais : chaque prompt de l'agent (planification, questions de clarification, réponse finale) demande au modèle de répondre en anglais — les modèles distants compatibles OpenAI ne dérivent plus vers leur langue par défaut.
+• Extraction mémoire et résumés d'historique également en anglais.
+• Validé contre des endpoints Ollama distants.
+• Correctifs et gains de stabilité.
+```
+
+### Notes de version 1.2.1 (archivées)
 
 ```
 New in 1.2.1:
@@ -181,16 +201,6 @@ New in 1.2.1:
 • Memories you explicitly saved are kept.
 • Fixed connections to local/remote OpenAI-compatible endpoints over plain http.
 • Bug fixes and stability improvements.
-```
-
-### Français (fr-FR), 365 caractères (max 500)
-
-```
-Nouveautés 1.2.1 :
-• Nouveau départ à chaque requête : le transcript et les vecteurs d'historique de la requête précédente sont purgés — plus aucune fuite de contexte entre tâches.
-• Les faits que vous avez explicitement mémorisés sont conservés.
-• Connexions corrigées vers les endpoints OpenAI-compatibles locaux/dists en http.
-• Correctifs et gains de stabilité.
 ```
 
 ### Notes de version 1.2.0 (archivées)
