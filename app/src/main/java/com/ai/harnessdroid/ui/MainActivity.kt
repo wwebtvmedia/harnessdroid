@@ -212,6 +212,7 @@ fun HarnessScreen(harnessService: HarnessService?) {
                     var showVersionDialog by remember { mutableStateOf(false) }
                     var showHelpDialog by remember { mutableStateOf(false) }
                     var showLLMConfigDialog by remember { mutableStateOf(false) }
+                    var showMemoryDialog by remember { mutableStateOf(false) }
 
                     IconButton(onClick = { showMenu = true }) {
                         Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu")
@@ -237,9 +238,16 @@ fun HarnessScreen(harnessService: HarnessService?) {
                         )
                         DropdownMenuItem(
                             text = { Text("LLM Configuration") },
-                            onClick = { 
+                            onClick = {
                                 showMenu = false
                                 showLLMConfigDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Memory") },
+                            onClick = {
+                                showMenu = false
+                                showMemoryDialog = true
                             }
                         )
                     }
@@ -266,6 +274,13 @@ fun HarnessScreen(harnessService: HarnessService?) {
                         LLMConfigDialog(
                             context = androidx.compose.ui.platform.LocalContext.current,
                             onDismiss = { showLLMConfigDialog = false }
+                        )
+                    }
+
+                    if (showMemoryDialog) {
+                        MemoryDialog(
+                            harnessService = harnessService,
+                            onDismiss = { showMemoryDialog = false }
                         )
                     }
 
@@ -567,6 +582,111 @@ fun LLMConfigDialog(
         },
         dismissButton = {
             OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+fun MemoryDialog(
+    harnessService: HarnessService?,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val memoryService = harnessService?.memoryService
+    val vectorStore = harnessService?.vectorStore
+
+    // Facts are re-read from the store after every mutation.
+    var facts by remember { mutableStateOf(listOf<String>()) }
+    var newFact by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    var recallResults by remember { mutableStateOf(listOf<String>()) }
+    var status by remember { mutableStateOf("") }
+
+    fun refresh() {
+        facts = vectorStore?.allEntries("memory")?.map { it.text } ?: emptyList()
+    }
+    LaunchedEffect(Unit) { refresh() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Memory") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Durable user facts, kept as embeddings and recalled before each task.",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = newFact,
+                        onValueChange = { newFact = it },
+                        label = { Text("New fact") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val fact = newFact
+                            scope.launch {
+                                val stored = memoryService?.remember(fact) ?: false
+                                status = if (stored) "Fact stored." else "Could not store (no embeddings?)."
+                                newFact = ""
+                                refresh()
+                            }
+                        },
+                        enabled = newFact.isNotBlank() && memoryService != null
+                    ) {
+                        Text("Remember")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("Recall query") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val q = query
+                            scope.launch {
+                                recallResults = memoryService?.recall(q) ?: emptyList()
+                                status = if (recallResults.isEmpty()) "Nothing recalled." else ""
+                            }
+                        },
+                        enabled = query.isNotBlank() && memoryService != null
+                    ) {
+                        Text("Recall")
+                    }
+                }
+
+                if (status.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(status, style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
+                }
+
+                if (recallResults.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Recalled:", fontWeight = FontWeight.Bold)
+                    recallResults.forEach { Text("- $it", maxLines = 2) }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Stored facts (${facts.size}):", fontWeight = FontWeight.Bold)
+                LazyColumn(modifier = Modifier.heightIn(max = 220.dp)) {
+                    items(facts.size) { i ->
+                        Text("- ${facts[i]}", maxLines = 2)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) { Text("Close") }
         }
     )
 }

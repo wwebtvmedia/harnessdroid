@@ -3,6 +3,8 @@ package com.ai.harnessdroid.core
 import android.content.Context
 import android.util.Log
 import com.ai.harnessdroid.llm.LLMClient
+import com.ai.harnessdroid.memory.ContextEmbedder
+import com.ai.harnessdroid.memory.VectorStore
 import com.ai.harnessdroid.tools.ToolRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,20 +16,74 @@ import org.json.JSONObject
  * Transformed into an explicit State-Machine Harness to support tiny LLMs (like Qwen2.5-0.5B or TinyLlama).
  * By explicitly guiding the LLM step-by-step through Intent -> Selection -> Argument Extraction,
  * we offload the orchestration cognitive load entirely onto the Harness.
+ *
+ * Context handling (HARNESS_CONTEXT_MODE):
+ *  - "embd" (default): once the inline history exceeds MAX_CONTEXT_CHARS, new
+ *    events are chunked, embedded and stored in the VectorStore; each FSM call
+ *    receives the top-K chunk vectors as a latent prefix plus the question as
+ *    text followup. Any failure falls back to the text path transparently.
+ *  - "text": legacy ACH summarization, exact rollback of the old behaviour.
  */
 class AgentLoop(
     private val llmClient: LLMClient,
     private val toolRegistry: ToolRegistry,
     private val sessionPersistence: SessionPersistence,
-    private val forensicLogger: ForensicLogger
+    private val forensicLogger: ForensicLogger,
+    private val vectorStore: VectorStore? = null,
+    private val memoryService: com.ai.harnessdroid.memory.MemoryService? = null
 ) {
     private val TAG = "AgentLoop"
     private var sessionLog = mutableListOf<SessionEvent>()
-    // Compression and mitigation configuration. Read from env vars so JVM unit tests can
-    // override them; on a real Android process these always resolve to the defaults.
-    private val MAX_CONTEXT_CHARS = (System.getenv("HARNESS_MAX_CONTEXT_CHARS") ?: "3000").toInt()
-    private val COMPRESSION_STRATEGY = System.getenv("HARNESS_COMPRESSION_STRATEGY") ?: "ach" // options: single, ach
-    private val USE_MOCK_LLM = (System.getenv("HARNESS_USE_MOCK_LLM") ?: "0") == "1"
+    // Compression and mitigation configuration. Read from system properties/env vars so JVM
+    // unit tests can override them; on a real Android process these resolve to the defaults.
+    private val MAX_CONTEXT_CHARS = (System.getProperty("HARNESS_MAX_CONTEXT_CHARS") ?: System.getenv("HARNESS_MAX_CONTEXT_CHARS") ?: "3000").toInt()
+    private val COMPRESSION_STRATEGY = System.getProperty("HARNESS_COMPRESSION_STRATEGY") ?: System.getenv("HARNESS_COMPRESSION_STRATEGY") ?: "ach" // options: single, ach
+    private val USE_MOCK_LLM = (System.getProperty("HARNESS_USE_MOCK_LLM") ?: System.getenv("HARNESS_USE_MOCK_LLM") ?: "0") == "1"
+    private val CONTEXT_MODE = (System.getProperty("HARNESS_CONTEXT_MODE") ?: System.getenv("HARNESS_CONTEXT_MODE") ?: "embd").lowercase()
+
+    /** Resolved on first use: >0 when the provider serves embeddings. */
+    private var embeddingDim: Int = 0
+    private var contextEmbedder: ContextEmbedder? = null
+
+    private suspend fun ensureEmbedder(): ContextEmbedder? {
+        contextEmbedder?.let { return it }
+        if (CONTEXT_MODE != "embd") return null
+        if (vectorStore == null) return null
+        if (embeddingDim == 0) embeddingDim = llmClient.embeddingDim()
+        if (embeddingDim <= 0) {
+            forensicLogger.logEvent("EMBD_UNAVAILABLE", "provider dim=${embeddingDim}; staying on text mode")
+            return null
+        }
+        contextEmbedder = ContextEmbedder(vectorStore) { text -> llmClient.embedText(text) }
+        return contextEmbedder
+    }
+
+    /** One FSM generation: latent prefix when available, text otherwise. */
+    private suspend fun generateWithContext(latentPrefix: FloatArray?, prompt: String, tag: String): String {
+        if (latentPrefix != null && latentPrefix.isNotEmpty()) {
+            try {
+                val viaEmbd = llmClient.generateFromEmbeddings(
+                    vectors = latentPrefix,
+                    followupPrompt = prompt,
+                    nPredict = 256
+                )
+                if (!viaEmbd.isNullOrBlank() && !viaEmbd.startsWith("Error")) {
+                    forensicLogger.logEvent("EMBD_CTX_RESPONSE", "$tag answered via embeddings (${latentPrefix.size} floats)")
+                    return viaEmbd
+                }
+                forensicLogger.logEvent("EMBD_CTX_REJECTED", "$tag embeddings call returned: ${viaEmbd?.take(80)}")
+            } catch (e: Exception) {
+                forensicLogger.logEvent("EMBD_CTX_ERROR", "$tag embeddings call failed: ${e.message}")
+            }
+            forensicLogger.logEvent("EMBD_FALLBACK_TEXT", "$tag fell back to the text path")
+        }
+        return llmClient.generateText(prompt)
+    }
+
+    private fun buildRetrievalQuery(taskInstruction: String, log: List<SessionEvent>): String {
+        val lastPlan = log.lastOrNull { it.role == "assistant" }?.content ?: ""
+        return if (lastPlan.isBlank()) taskInstruction else "$taskInstruction\n$lastPlan"
+    }
 
     suspend fun runTask(taskInstruction: String, maxTurns: Int = 10): String = withContext(Dispatchers.IO) {
         forensicLogger.logEvent("LOOP_INIT", "Discovering tools...")
@@ -92,27 +148,66 @@ class AgentLoop(
             
             // FSM STATE 1: Intent & Tool Selection
             var contextStr = buildContextString(sessionLog)
+            // Latent prefix for this turn's FSM calls (null = text mode).
+            var latentPrefix: FloatArray? = null
             // If the context is growing large, compress it using configured strategy
             if (contextStr.length > MAX_CONTEXT_CHARS) {
-                forensicLogger.logEvent("CONTEXT_COMPRESSION_START", "Context length ${contextStr.length}, strategy=$COMPRESSION_STRATEGY")
-                val startMs = System.currentTimeMillis()
-                val compressed = try {
-                    performCompression(contextStr)
-                } catch (e: Exception) {
-                    forensicLogger.logEvent("CONTEXT_COMPRESSION_ERROR", "Compression failed: ${e.message}")
-                    contextStr
+                val embedder = ensureEmbedder()
+                if (embedder != null) {
+                    // Embedding mode: the store IS the history memory. New events
+                    // are chunkized+embedded, retrieval returns the top-K vectors
+                    // injected as a latent prefix; the text history is elided.
+                    forensicLogger.logEvent("EMBD_CTX_START", "Context length ${contextStr.length}, store=${vectorStore?.size}")
+                    val startMs = System.currentTimeMillis()
+                    try {
+                        embedder.ingestNew(sessionLog)
+                        val query = buildRetrievalQuery(taskInstruction, sessionLog)
+                        val vectors = embedder.retrieveLatent(query, dim = embeddingDim)
+                        val elapsed = System.currentTimeMillis() - startMs
+                        if (vectors != null && vectors.isNotEmpty()) {
+                            latentPrefix = vectors
+                            val chunks = vectors.size / embeddingDim
+                            contextStr = "[HISTORY: $chunks chunks injected as embeddings]"
+                            forensicLogger.logEvent("EMBD_CTX_RESULT", "chunks=$chunks elapsed_ms=$elapsed store=${vectorStore?.size}")
+                            // Elide: keep the original user request; the store
+                            // holds everything else.
+                            val originalRequest = sessionLog.firstOrNull { it.role == "user" }
+                            sessionLog = mutableListOf()
+                            originalRequest?.let { sessionLog.add(it) }
+                            embedder.rewind(sessionLog.size)
+                            sessionPersistence.flushLog(sessionLog)
+                        } else {
+                            forensicLogger.logEvent("EMBD_FALLBACK_TEXT", "retrieval returned no vectors (elapsed_ms=$elapsed); using ACH compression")
+                            contextStr = compressTextPath(contextStr)
+                        }
+                    } catch (e: Exception) {
+                        forensicLogger.logEvent("EMBD_CTX_ERROR", "Embedding ingest/retrieve failed: ${e.message}")
+                        forensicLogger.logEvent("EMBD_FALLBACK_TEXT", "using ACH compression")
+                        contextStr = compressTextPath(contextStr)
+                    }
+                } else {
+                    contextStr = compressTextPath(contextStr)
                 }
-                val elapsed = System.currentTimeMillis() - startMs
-                forensicLogger.logEvent("CONTEXT_COMPRESSION_RESULT", "Compressed length ${compressed.length}, elapsed_ms=$elapsed")
-                contextStr = "<COMPRESSED_HISTORY>\n$compressed\n</COMPRESSED_HISTORY>"
-                // Elide the history: keep the original user request, replace everything else
-                // with the summary. Without elision the summaries accumulate and every turn
-                // re-compresses an ever-growing log.
-                val originalRequest = sessionLog.firstOrNull { it.role == "user" }
-                sessionLog = mutableListOf()
-                originalRequest?.let { sessionLog.add(it) }
-                sessionLog.add(SessionEvent("system", "CompressedConversationSummary: $compressed"))
-                sessionPersistence.flushLog(sessionLog)
+            }
+
+            // Dual memory injection (F6): fact vectors join the latent prefix,
+            // and by default the facts are ALSO rendered as a short text block
+            // (a 0.5B model largely ignores soft prompts).
+            var memoryText = ""
+            if (memoryService != null) {
+                try {
+                    val factVectors = memoryService.recallVectors(taskInstruction, dim = embeddingDim)
+                    if (factVectors != null) {
+                        latentPrefix = if (latentPrefix == null) factVectors else latentPrefix!!.plus(factVectors)
+                    }
+                    memoryText = memoryService.buildMemoryPrefix(taskInstruction)
+                    if (memoryText.isNotEmpty()) {
+                        val factCount = memoryText.lines().count { it.startsWith("- ") }
+                        forensicLogger.logEvent("MEMORY_INJECT", "injected $factCount user facts")
+                    }
+                } catch (e: Exception) {
+                    forensicLogger.logEvent("MEMORY_ERROR", "memory injection failed: ${e.message}")
+                }
             }
             val osInfo = "Android OS API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
             // Filter tools based on the LLM's intent-compatible capability hints to reduce context.
@@ -159,7 +254,7 @@ Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
 .trimIndent()
             
             forensicLogger.logEvent("FSM_STATE_1", "Asking LLM to pick a tool.")
-            val rawToolChoice = llmClient.generateText(step1Prompt).trim()
+            val rawToolChoice = generateWithContext(latentPrefix, memoryText + step1Prompt, "FSM_STATE_1").trim()
             forensicLogger.logEvent("FSM_STATE_1_RESPONSE", "LLM replied: $rawToolChoice")
             var toolChoice = rawToolChoice
             
@@ -193,7 +288,7 @@ Provide the final answer to the user based on the conversation and tool results 
 .trimIndent()
                 
                 forensicLogger.logEvent("FSM_STATE_1B", "Asking LLM for final answer.")
-                finalResult = llmClient.generateText(step1bPrompt).trim()
+                finalResult = generateWithContext(latentPrefix, memoryText + step1bPrompt, "FSM_STATE_1B").trim()
                 sessionLog.add(SessionEvent("assistant", finalResult))
                 sessionPersistence.flushLog(sessionLog)
                 break
@@ -219,7 +314,7 @@ Do NOT output any other text or explanation.
             """.trimIndent()
             
             forensicLogger.logEvent("FSM_STATE_2", "Asking LLM to generate arguments for $toolChoice.")
-            val argsResponse = llmClient.generateText(step2Prompt).trim()
+            val argsResponse = generateWithContext(latentPrefix, memoryText + step2Prompt, "FSM_STATE_2").trim()
             val arguments = cleanJson(argsResponse)
             
             forensicLogger.logEvent("PLAN_TOOL_CALL", "Executing '$toolChoice' with args: $arguments")
@@ -239,6 +334,28 @@ Do NOT output any other text or explanation.
             forensicLogger.logEvent("ERROR", finalResult)
             sessionLog.add(SessionEvent("system", finalResult))
             sessionPersistence.flushLog(sessionLog)
+        }
+
+        // Learn from the task: pull durable user facts out of the transcript
+        // (one greedy text call; skipped for the mock LLM used in CI).
+        if (memoryService != null && !USE_MOCK_LLM) {
+            try {
+                val stored = memoryService.extractMemories(sessionLog)
+                forensicLogger.logEvent("MEMORY_EXTRACT", "$stored new facts stored")
+            } catch (e: Exception) {
+                forensicLogger.logEvent("MEMORY_EXTRACT_ERROR", "extraction failed: ${e.message}")
+            }
+        }
+
+        // Persist the embedding store at the end of every task run.
+        if (vectorStore != null && contextEmbedder != null) {
+            try {
+                val stored = vectorStore.size
+                vectorStore.flush(force = true)
+                forensicLogger.logEvent("VECTOR_STORE_FLUSH", "persisted $stored vectors")
+            } catch (e: Exception) {
+                forensicLogger.logEvent("VECTOR_STORE_FLUSH_ERROR", "flush failed: ${e.message}")
+            }
         }
 
         return@withContext finalResult
@@ -373,6 +490,29 @@ Do NOT output any other text or explanation.
 
         forensicLogger.logEvent("FILTER_RESULT", "Filtered tools count: ${out.length()}")
         return out
+    }
+
+    /** Legacy text compression path (ACH/single): summarize, wrap and elide. */
+    private suspend fun compressTextPath(contextStr: String): String {
+        forensicLogger.logEvent("CONTEXT_COMPRESSION_START", "Context length ${contextStr.length}, strategy=$COMPRESSION_STRATEGY")
+        val startMs = System.currentTimeMillis()
+        val compressed = try {
+            performCompression(contextStr)
+        } catch (e: Exception) {
+            forensicLogger.logEvent("CONTEXT_COMPRESSION_ERROR", "Compression failed: ${e.message}")
+            contextStr
+        }
+        val elapsed = System.currentTimeMillis() - startMs
+        forensicLogger.logEvent("CONTEXT_COMPRESSION_RESULT", "Compressed length ${compressed.length}, elapsed_ms=$elapsed")
+        // Elide the history: keep the original user request, replace everything else
+        // with the summary. Without elision the summaries accumulate and every turn
+        // re-compresses an ever-growing log.
+        val originalRequest = sessionLog.firstOrNull { it.role == "user" }
+        sessionLog = mutableListOf()
+        originalRequest?.let { sessionLog.add(it) }
+        sessionLog.add(SessionEvent("system", "CompressedConversationSummary: $compressed"))
+        sessionPersistence.flushLog(sessionLog)
+        return "<COMPRESSED_HISTORY>\n$compressed\n</COMPRESSED_HISTORY>"
     }
 
     private fun buildContextString(log: List<SessionEvent>): String {

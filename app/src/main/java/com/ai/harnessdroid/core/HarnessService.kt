@@ -60,6 +60,12 @@ class HarnessService : Service(), HumanInteractionHandler {
     private lateinit var sessionPersistence: SessionPersistence
     private lateinit var toolRegistry: com.ai.harnessdroid.tools.ToolRegistry
 
+    // Shared embedding space, exposed for the memory UI.
+    var vectorStore: com.ai.harnessdroid.memory.VectorStore? = null
+        private set
+    var memoryService: com.ai.harnessdroid.memory.MemoryService? = null
+        private set
+
     override fun onCreate() {
         super.onCreate()
         startForeground(1, createNotification())
@@ -81,8 +87,21 @@ class HarnessService : Service(), HumanInteractionHandler {
         toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
         
         sessionPersistence = SessionPersistence(this, "session_1")
-        
-        agentLoop = AgentLoop(llmClient, toolRegistry, sessionPersistence, forensicLogger)
+
+        // Shared embedding store: the AgentLoop (history chunks) and the
+        // memory features (durable facts) read and write the same space.
+        val vectorStore = com.ai.harnessdroid.memory.VectorStore(filesDir, "tree4five")
+        val memoryService = com.ai.harnessdroid.memory.MemoryService(
+            store = vectorStore,
+            embedder = { text -> llmClient.embedText(text) },
+            generate = { prompt -> llmClient.generateText(prompt) }
+        )
+
+        agentLoop = AgentLoop(llmClient, toolRegistry, sessionPersistence, forensicLogger, vectorStore, memoryService)
+
+        // Exposed for the UI memory screen.
+        this.vectorStore = vectorStore
+        this.memoryService = memoryService
         
         scope.launch {
             sessionPersistence.initializeLog()

@@ -96,6 +96,11 @@ class VectorStore(
 
     val size: Int get() = synchronized(entries) { entries.size }
 
+    /** Snapshot of stored entries, optionally filtered by kind (newest last). */
+    fun allEntries(kind: String? = null): List<VectorEntry> = synchronized(entries) {
+        entries.filter { kind == null || it.kind == kind }
+    }
+
     /**
      * Stores a chunk. Returns false when it was skipped as a duplicate.
      * `dim` mismatch with the current modelTag is allowed across sessions;
@@ -107,6 +112,14 @@ class VectorStore(
         kind: String,
         role: String = "system",
         toolName: String? = null
+    ): Boolean = withContext(Dispatchers.IO) { ingestLocked(text, vector, kind, role, toolName) }
+
+    private suspend fun ingestLocked(
+        text: String,
+        vector: FloatArray,
+        kind: String,
+        role: String,
+        toolName: String?
     ): Boolean = mutex.withLock {
         if (vector.isEmpty()) return false
 
@@ -155,8 +168,8 @@ class VectorStore(
         query: FloatArray,
         topK: Int = 4,
         kinds: Set<String> = setOf("history", "memory")
-    ): List<ScoredEntry> = mutex.withLock {
-        if (query.isEmpty() || topK <= 0) return emptyList()
+    ): List<ScoredEntry> = withContext(Dispatchers.IO) { mutex.withLock {
+        if (query.isEmpty() || topK <= 0) return@withLock emptyList()
         val scored = ArrayList<ScoredEntry>()
         synchronized(entries) {
             for (e in entries) {
@@ -167,12 +180,14 @@ class VectorStore(
         }
         scored.sortByDescending { it.score }
         scored.take(topK)
-    }
+    } }
 
     /** Persists the store; throttled unless [force]. */
-    suspend fun flush(force: Boolean = false) = mutex.withLock {
-        if (!force && insertsSinceFlush.get() == 0) return
-        flushLocked()
+    suspend fun flush(force: Boolean = false) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (!force && insertsSinceFlush.get() == 0) return@withLock
+            flushLocked()
+        }
     }
 
     private fun flushLocked() {
