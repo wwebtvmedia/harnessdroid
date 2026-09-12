@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.util.Log
+import com.ai.harnessdroid.memory.EmbeddingCodec
+import com.tree4five.gguf.IEmbedCallback
 import com.tree4five.gguf.ILLMCallback
 import com.tree4five.gguf.ILLMService
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +20,17 @@ open class LLMClient(private val context: Context?) {
     private var llmService: ILLMService? = null
     private var isBound = false
     private val TAG = "LLMClient"
+
+    /**
+     * Binder oneway calls only preserve order from the SAME calling thread,
+     * so the whole begin/set/generate sequence runs on a single-threaded
+     * dispatcher: chunks can never arrive out of order on the provider side.
+     */
+    private val uploadDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+    /** Cached embedding dimension; null = never probed, -1 = unavailable. */
+    @Volatile
+    private var cachedEmbeddingDim: Int? = null
 
     internal fun resolveCustomUrl(rawUrl: String, apiType: String = "OpenAI"): String {
         val trimmed = rawUrl.trim()
@@ -161,6 +174,150 @@ open class LLMClient(private val context: Context?) {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Dimension of the local model's embedding space, or -1 when embeddings
+     * are unavailable (remote HTTP LLM, old provider without the transaction,
+     * model without a usable token_embd). Callers fall back to text mode.
+     */
+    open suspend fun embeddingDim(): Int {
+        cachedEmbeddingDim?.let { return it }
+        val config = context?.let { LLMConfigManager(it) }
+        if (config != null && !config.useTree4Five) {
+            cachedEmbeddingDim = -1
+            return -1
+        }
+        return try {
+            val service = getService()
+            val dim = service.embeddingDim
+            val resolved = if (dim > 0) dim else -1
+            cachedEmbeddingDim = resolved
+            resolved
+        } catch (t: Throwable) {
+            // Older provider build (unknown binder transaction), dead service...
+            Log.w(TAG, "embeddingDim probe failed: ${t.message}")
+            cachedEmbeddingDim = -1
+            -1
+        }
+    }
+
+    /**
+     * Embeds `text` into the model's space (mean of token-embedding rows,
+     * no forward pass). Returns null when embeddings are unavailable; the
+     * caller falls back to text.
+     */
+    open suspend fun embedText(text: String): FloatArray? {
+        if (embeddingDim() <= 0) return null
+        return try {
+            val service = getService()
+            withContext(Dispatchers.IO) {
+                suspendCancellableCoroutine { continuation ->
+                    val callback = object : IEmbedCallback.Stub() {
+                        override fun onEmbedding(q8: ByteArray?, dim: Int) {
+                            if (q8 == null || dim <= 0) {
+                                if (continuation.isActive) continuation.resume(null)
+                                return
+                            }
+                            try {
+                                val vector = EmbeddingCodec.decodeFlat(q8, dim)
+                                if (continuation.isActive) continuation.resume(vector)
+                            } catch (e: Exception) {
+                                if (continuation.isActive) continuation.resume(null)
+                            }
+                        }
+
+                        override fun onError(message: String?) {
+                            Log.w(TAG, "embedText error: $message")
+                            if (continuation.isActive) continuation.resume(null)
+                        }
+                    }
+                    try {
+                        service.embedText(text, callback)
+                    } catch (e: Exception) {
+                        if (continuation.isActive) continuation.resume(null)
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "embedText failed: ${t.message}")
+            null
+        }
+    }
+
+    /**
+     * Generation from injected embeddings (latent context) with the actual
+     * question as a text followup. Returns null when the provider cannot do
+     * it (embeddings unavailable, upload or generation failed); the caller
+     * must then fall back to [generateText].
+     */
+    open suspend fun generateFromEmbeddings(
+        vectors: FloatArray,
+        count: Int? = null,
+        followupPrompt: String,
+        nPredict: Int = 256,
+        temperature: Float = 0f
+    ): String? {
+        if (embeddingDim() <= 0) return null
+        val dim = cachedEmbeddingDim ?: return null
+        val resolvedCount = count ?: vectors.size / dim
+        if (resolvedCount <= 0 || vectors.size < resolvedCount * dim) return null
+        return try {
+            val service = getService()
+            withContext(uploadDispatcher) {
+                val handle = service.beginEmbeddingInput(resolvedCount, dim)
+                if (handle <= 0) return@withContext null
+
+                try {
+                    // Chunks stay far below the 512 KB Binder transaction limit:
+                    // 32 vectors x (4 + dim) bytes (~29 KB at dim=896).
+                    val chunkVectors = maxOf(1, 32_000 / (4 + dim))
+                    var start = 0
+                    while (start < resolvedCount) {
+                        val chunk = minOf(chunkVectors, resolvedCount - start)
+                        val bytes = ByteArray(chunk * (4 + dim))
+                        val buf = java.nio.ByteBuffer.wrap(bytes)
+                            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        for (t in 0 until chunk) {
+                            val base = (start + t) * dim
+                            val slice = java.util.Arrays.copyOfRange(vectors, base, base + dim)
+                            val packed = EmbeddingCodec.encodeOne(slice)
+                            buf.put(packed)
+                        }
+                        service.setEmbeddingChunk(handle, start, bytes)
+                        start += chunk
+                    }
+
+                    val result = suspendCancellableCoroutine { continuation ->
+                        val callback = object : ILLMCallback.Stub() {
+                            override fun onTokenReceived(token: String) {}
+                            override fun onGenerationComplete(fullText: String) {
+                                if (continuation.isActive) continuation.resume(fullText)
+                            }
+                        }
+                        try {
+                            service.generateFromEmbeddings(
+                                handle, resolvedCount, followupPrompt, nPredict, temperature, callback
+                            )
+                        } catch (e: Exception) {
+                            if (continuation.isActive) continuation.resumeWithException(e)
+                        }
+                    }
+                    // The provider prefixes load errors; treat them as failures
+                    // so the AgentLoop falls back to the text path.
+                    if (result.startsWith("Error:")) null else result
+                } finally {
+                    try {
+                        service.releaseEmbeddings(handle)
+                    } catch (_: Exception) {
+                        // Slot is LRU-evicted anyway.
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "generateFromEmbeddings failed: ${t.message}")
+            null
         }
     }
 }

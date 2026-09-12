@@ -51,6 +51,11 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.1"
     }
+    testOptions {
+        // JVM tests exercise classes that call android.util.Log (VectorStore,
+        // LLMClient): stub those calls instead of throwing "not mocked".
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
