@@ -85,10 +85,13 @@ class AgentLoop(
         return if (lastPlan.isBlank()) taskInstruction else "$taskInstruction\n$lastPlan"
     }
 
-    suspend fun runTask(taskInstruction: String, maxTurns: Int = 10): String = withContext(Dispatchers.IO) {
-        // The session was purged before this task started (HarnessService),
-        // so the embedder's ingest cursor must restart from zero too.
+    /** Called when the user clears the session: the embedder's ingest
+     *  cursor restarts from zero, matching the emptied transcript. */
+    fun resetContext() {
         contextEmbedder = null
+    }
+
+    suspend fun runTask(taskInstruction: String, maxTurns: Int = 10): String = withContext(Dispatchers.IO) {
         forensicLogger.logEvent("LOOP_INIT", "Discovering tools...")
         val toolSchemasRaw = toolRegistry.discoverAndBindTools()
         val toolsArray = try { JSONArray(toolSchemasRaw) } catch (e: Exception) { JSONArray() }

@@ -113,7 +113,14 @@ class HarnessService : Service(), HumanInteractionHandler {
 
     fun clearLog() {
         scope.launch {
+            // Explicit user action (Clear button): wipe the whole working
+            // context — transcript, history vectors and the embedder's
+            // ingest cursor. Durable user facts (kind=memory) survive.
+            val previous = sessionPersistence.loadLog()
             sessionPersistence.clearLog()
+            val droppedVectors = vectorStore?.purgeKind("history") ?: 0
+            agentLoop.resetContext()
+            forensicLogger.logEvent("SESSION_PURGED", "dropped ${previous.size} session events, $droppedVectors history vectors")
         }
     }
 
@@ -129,16 +136,14 @@ class HarnessService : Service(), HumanInteractionHandler {
         forensicLogger.logEvent("TASK_START", "Received user request: $request")
         scope.launch {
             try {
-                // A new request starts from a clean slate: the previous
-                // request's transcript and history vectors must not leak
-                // into this task's prompts. Durable user facts (kind=memory)
-                // survive by design.
-                val previous = sessionPersistence.loadLog()
-                sessionPersistence.clearLog()
-                val droppedVectors = vectorStore?.purgeKind("history") ?: 0
-                forensicLogger.logEvent("SESSION_PURGED", "dropped ${previous.size} session events, $droppedVectors history vectors")
-
-                sessionPersistence.flushLog(listOf(SessionEvent("user", request)))
+                // The transcript and history vectors persist across requests
+                // so follow-up questions keep their context; the user clears
+                // them explicitly with the Clear button (clearLog).
+                // flushLog REPLACES the stored file, so append to the loaded
+                // history instead of flushing a single-event list.
+                val history = sessionPersistence.loadLog()
+                history.add(SessionEvent("user", request))
+                sessionPersistence.flushLog(history)
 
                 val result = agentLoop.runTask(request)
                 forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
