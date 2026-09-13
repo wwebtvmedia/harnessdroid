@@ -91,13 +91,15 @@ class MainActivity : ComponentActivity() {
         val customUrl = intent?.getStringExtra("custom_url")
         val customApiKey = intent?.getStringExtra("custom_api_key")
         val customApiType = intent?.getStringExtra("custom_api_type")
+        val customModel = intent?.getStringExtra("custom_model")
 
-        if (!customUrl.isNullOrBlank() || !customApiKey.isNullOrBlank() || !customApiType.isNullOrBlank()) {
+        if (!customUrl.isNullOrBlank() || !customApiKey.isNullOrBlank() || !customApiType.isNullOrBlank() || !customModel.isNullOrBlank()) {
             val configManager = com.ai.harnessdroid.llm.LLMConfigManager(this)
             configManager.useTree4Five = false
             if (!customUrl.isNullOrBlank()) configManager.customUrl = customUrl
             if (!customApiKey.isNullOrBlank()) configManager.customApiKey = customApiKey
             if (!customApiType.isNullOrBlank()) configManager.customApiType = customApiType
+            if (!customModel.isNullOrBlank()) configManager.customModel = customModel
         }
     }
 
