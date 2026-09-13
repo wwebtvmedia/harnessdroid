@@ -31,7 +31,9 @@ data class BoundToolService(
 
 open class ToolRegistry(
     private val context: Context?,
-    private val interactionManager: InteractionManager?
+    private val interactionManager: InteractionManager?,
+    /** False for sub-agent registries: delegate_task is then neither exposed nor executable. */
+    private val allowDelegation: Boolean = true
 ) {
     private val TAG = "ToolRegistry"
     private val boundServices = mutableMapOf<String, BoundToolService>()
@@ -40,6 +42,22 @@ open class ToolRegistry(
     // Timeouts so a misbehaving tool provider can never stall the AgentLoop forever.
     private val BIND_TIMEOUT_MS = 5_000L
     private val TOOL_CALL_TIMEOUT_MS = 15_000L
+
+    /**
+     * Hard cap on one tool result before it reaches the LLM: a huge dump would blow
+     * the context window of a small model before history compression ever runs.
+     * Overridable for JVM tests via HARNESS_MAX_TOOL_RESULT_CHARS.
+     */
+    private val MAX_TOOL_RESULT_CHARS =
+        (System.getProperty("HARNESS_MAX_TOOL_RESULT_CHARS")
+            ?: System.getenv("HARNESS_MAX_TOOL_RESULT_CHARS"))?.toIntOrNull()
+            ?: 6000
+
+    /**
+     * Injected by the harness service: runs a sub-AgentLoop on a fresh session and
+     * returns its final answer. Null (or [allowDelegation] false) = delegation disabled.
+     */
+    var delegateHandler: (suspend (task: String, agentType: String) -> String)? = null
 
     private val mcpRequestId = AtomicInteger(1)
     private val pendingRequests = ConcurrentHashMap<Int, Continuation<JSONObject>>()
@@ -142,10 +160,13 @@ open class ToolRegistry(
         val listInstalledAppsTool = """
             {
                 "name": "list_installed_apps",
-                "description": "Lists all installed applications and tools on this Android device.",
+                "description": "Lists installed applications on this Android device, paginated.",
                 "parameters": {
                     "type": "object",
-                    "properties": {}
+                    "properties": {
+                        "offset": { "type": "integer", "description": "Number of apps to skip before listing (default 0)." },
+                        "limit": { "type": "integer", "description": "Maximum apps per page (default 50, max 200)." }
+                    }
                 }
             }
         """.trimIndent()
@@ -156,7 +177,9 @@ open class ToolRegistry(
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "capabilities": { "type": "array", "items": { "type": "string" }, "description": "Short capability names such as read_mail, send_email, view_web, or open_app." }
+                        "capabilities": { "type": "array", "items": { "type": "string" }, "description": "Short capability names such as read_mail, send_email, view_web, or open_app." },
+                        "offset": { "type": "integer", "description": "Number of matches to skip before listing (default 0)." },
+                        "limit": { "type": "integer", "description": "Maximum matches per page (default 30, max 100)." }
                     }
                 }
             }
@@ -238,6 +261,20 @@ open class ToolRegistry(
                 }
             }
         """.trimIndent()
+        val delegateTaskTool = """
+            {
+                "name": "delegate_task",
+                "description": "Delegate a self-contained sub-task to a fresh sub-agent that runs with its own context window and tools (it cannot delegate further). Use it for long side-quests (e.g. 'open Gmail, find the sender of the latest email') so the main conversation stays small. The sub-agent's final answer is returned to you.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": { "type": "string", "description": "Complete, self-contained instruction for the sub-agent (it cannot see this conversation)." },
+                        "agent_type": { "type": "string", "description": "Optional specialist: 'navigator' for app/screen work, 'researcher' for information gathering. Defaults to 'general'." }
+                    },
+                    "required": ["task"]
+                }
+            }
+        """.trimIndent()
         allSchemas.put(JSONObject(builtInAskHuman))
         allSchemas.put(JSONObject(listIntentsTool))
         allSchemas.put(JSONObject(osInfoTool))
@@ -249,6 +286,13 @@ open class ToolRegistry(
         allSchemas.put(JSONObject(tapScreenTool))
         allSchemas.put(JSONObject(swipeScreenTool))
         allSchemas.put(JSONObject(tapElementTool))
+
+        // Sub-agent delegation: only when this registry is allowed to delegate
+        // (the sub-agent's own registry is built with allowDelegation=false, which
+        // both hides the tool and makes the handler unreachable: depth is capped at 1).
+        if (allowDelegation) {
+            allSchemas.put(JSONObject(delegateTaskTool))
+        }
         
         // Removed mock read_emails tool. Real tools will be discovered via Intent.
 
@@ -415,10 +459,54 @@ open class ToolRegistry(
     }
 
     /**
+     * Public entry: every tool result passes through the context-safety limit
+     * before being handed back to the LLM.
+     */
+    open suspend fun executeTool(toolName: String, jsonArgs: String): String =
+        enforceToolResultLimit(toolName, executeToolInternal(toolName, jsonArgs))
+
+    /**
+     * Caps a tool result at MAX_TOOL_RESULT_CHARS. Prefer surgical truncation of the
+     * largest string member (the payload stays valid JSON); fall back to a hard cut.
+     * Either way an explicit note tells the small LLM the output was cut.
+     */
+    internal fun enforceToolResultLimit(toolName: String, resultJson: String): String {
+        val total = resultJson.length
+        if (total <= MAX_TOOL_RESULT_CHARS) return resultJson
+        val note = "[Output truncated: $MAX_TOOL_RESULT_CHARS of $total characters shown. " +
+            "Refine what you asked for (narrower capability, a specific element) or paginate with offset/limit instead of re-running the same call.]"
+        try {
+            val obj = JSONObject(resultJson)
+            var bigKey: String? = null
+            var bigLen = 0
+            for (key in obj.keys()) {
+                val v = obj.opt(key)
+                if (v is String && v.length > bigLen) {
+                    bigLen = v.length
+                    bigKey = key
+                }
+            }
+            if (bigKey != null && bigLen > 400) {
+                // Margin for JSON escaping (newlines inflate) and the added fields.
+                val keep = (MAX_TOOL_RESULT_CHARS - note.length - 200).coerceAtLeast(200)
+                obj.put(bigKey, obj.getString(bigKey).take(keep) + "…")
+                obj.put("truncated", true)
+                obj.put("truncation_note", note)
+                val out = obj.toString()
+                return if (out.length <= MAX_TOOL_RESULT_CHARS + 100) out
+                else resultJson.take(MAX_TOOL_RESULT_CHARS) + "\n$note"
+            }
+        } catch (_: Exception) {
+            // Not a JSON object: hard cut below.
+        }
+        return resultJson.take(MAX_TOOL_RESULT_CHARS) + "\n$note"
+    }
+
+    /**
      * Executes a tool asynchronously over AIDL and waits for the callback result.
      * Incorporates human-in-the-loop Guard checks before firing external intents.
      */
-    open suspend fun executeTool(toolName: String, jsonArgs: String): String = withContext(Dispatchers.IO) {
+    open suspend fun executeToolInternal(toolName: String, jsonArgs: String): String = withContext(Dispatchers.IO) {
         // Handle built-in tools first
         if (toolName == "get_os_info") {
             val info = "Android API ${android.os.Build.VERSION.SDK_INT}, Model: ${android.os.Build.MODEL}"
@@ -432,10 +520,25 @@ open class ToolRegistry(
         }
 
         if (toolName == "list_installed_apps") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
             val pm = context?.packageManager
             val packages = pm?.getInstalledPackages(PackageManager.GET_META_DATA)
-            val apps = packages?.joinToString(", ") { it.packageName } ?: "None"
-            return@withContext JSONObject().put("result", "Installed packages: $apps").toString()
+                ?: return@withContext JSONObject().put("result", "Installed packages: None").toString()
+            val names = packages.map { it.packageName }.sorted()
+            val offset = args.optInt("offset", 0).coerceIn(0, names.size)
+            val limit = args.optInt("limit", 50).coerceIn(1, 200)
+            val page = names.drop(offset).take(limit)
+            val nextOffset = if (offset + limit < names.size) offset + limit else null
+            val payload = JSONObject()
+                .put("result", "Installed packages (${names.size} total): ${page.joinToString(", ")}")
+                .put("total", names.size)
+                .put("offset", offset)
+                .put("returned", page.size)
+            if (nextOffset != null) {
+                payload.put("next_offset", nextOffset)
+                    .put("hint", "More apps remain: call list_installed_apps again with offset=$nextOffset.")
+            }
+            return@withContext payload.toString()
         }
 
         if (toolName == "list_compatible_intent_apps") {
@@ -444,8 +547,25 @@ open class ToolRegistry(
                 (0 until arr.length()).mapNotNull { idx -> arr.optString(idx, "").trim().ifBlank { null } }
             } ?: emptyList()
             val matches = discoverCompatibleIntentApps(capabilityHints)
-            val summary = if (matches.isEmpty()) "No compatible Android intent-filter apps found for the requested capability." else "Compatible apps: ${matches.joinToString(", ")}"
-            return@withContext JSONObject().put("result", summary).toString()
+            if (matches.isEmpty()) {
+                return@withContext JSONObject().put(
+                    "result",
+                    "No compatible Android intent-filter apps found for the requested capability."
+                ).toString()
+            }
+            val offset = args.optInt("offset", 0).coerceIn(0, matches.size)
+            val limit = args.optInt("limit", 30).coerceIn(1, 100)
+            val page = matches.drop(offset).take(limit)
+            val payload = JSONObject()
+                .put("result", "Compatible apps (${matches.size} total): ${page.joinToString(", ")}")
+                .put("total", matches.size)
+                .put("offset", offset)
+                .put("returned", page.size)
+            if (offset + limit < matches.size) {
+                payload.put("next_offset", offset + limit)
+                    .put("hint", "More matches remain: call list_compatible_intent_apps again with offset=${offset + limit}.")
+            }
+            return@withContext payload.toString()
         }
 
         if (toolName == "list_skill_commands") {
@@ -474,6 +594,29 @@ open class ToolRegistry(
                 .put("command", command)
                 .put("history_recorded", true)
                 .toString()
+        }
+
+        if (toolName == "delegate_task") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val task = args.optString("task", "").trim()
+            val agentType = args.optString("agent_type", "general").trim().ifBlank { "general" }
+            if (task.isEmpty()) {
+                return@withContext JSONObject().put("error", "delegate_task requires 'task': a complete, self-contained instruction for the sub-agent.").toString()
+            }
+            val handler = delegateHandler
+                ?: return@withContext JSONObject().put(
+                    "error",
+                    "Delegation is not available in this context. Handle the task yourself with the tools above."
+                ).toString()
+            // A crashed sub-agent must not take the main loop down: hand the error
+            // back as a tool result so the model can handle the task itself.
+            return@withContext try {
+                handler(task, agentType)
+            } catch (e: Exception) {
+                JSONObject()
+                    .put("error", "Sub-agent '$agentType' failed: ${e.message}. Handle the task yourself with the tools above.")
+                    .toString()
+            }
         }
 
         if (toolName == "ask_human_for_input") {

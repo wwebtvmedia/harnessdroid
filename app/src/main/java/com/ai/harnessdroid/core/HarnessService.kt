@@ -55,6 +55,7 @@ class HarnessService : Service(), HumanInteractionHandler {
     // human does not answer in time.
     private lateinit var llmClient: com.ai.harnessdroid.llm.LLMClient
     private lateinit var clarificationStore: ClarificationStore
+    private lateinit var interactionManager: InteractionManager
     private lateinit var agentLoop: AgentLoop
     private lateinit var forensicLogger: ForensicLogger
     private lateinit var sessionPersistence: SessionPersistence
@@ -83,7 +84,7 @@ class HarnessService : Service(), HumanInteractionHandler {
         
         llmClient = com.ai.harnessdroid.llm.LLMClient(this)
         clarificationStore = ClarificationStore(filesDir)
-        val interactionManager = InteractionManager(this)
+        val interactionManager = InteractionManager(this).also { this.interactionManager = it }
         toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
         
         sessionPersistence = SessionPersistence(this, "session_1")
@@ -98,6 +99,13 @@ class HarnessService : Service(), HumanInteractionHandler {
         )
 
         agentLoop = AgentLoop(llmClient, toolRegistry, sessionPersistence, forensicLogger, vectorStore, memoryService)
+
+        // Sub-agent delegation: a delegate_task call spins a fresh AgentLoop with its
+        // own session (own context window) over a registry that cannot delegate again
+        // (depth capped at 1). Only the sub-agent's final answer joins this context.
+        toolRegistry.delegateHandler = { task, agentType ->
+            runSubAgent(task, agentType, vectorStore, memoryService)
+        }
 
         // Exposed for the UI memory screen.
         this.vectorStore = vectorStore
@@ -121,6 +129,37 @@ class HarnessService : Service(), HumanInteractionHandler {
             val droppedVectors = vectorStore?.purgeKind("history") ?: 0
             agentLoop.resetContext()
             forensicLogger.logEvent("SESSION_PURGED", "dropped ${previous.size} session events, $droppedVectors history vectors")
+        }
+    }
+
+    /**
+     * Runs one delegated sub-task on a fresh session and returns the tool-result
+     * JSON for the main agent. Fewer turns than the main loop: a delegation that
+     * cannot converge in 6 steps should report back instead of grinding.
+     */
+    private suspend fun runSubAgent(
+        task: String,
+        agentType: String,
+        vectorStore: com.ai.harnessdroid.memory.VectorStore?,
+        memoryService: com.ai.harnessdroid.memory.MemoryService?
+    ): String {
+        forensicLogger.logEvent("DELEGATE_START", "agent_type=$agentType task=$task")
+        return try {
+            val subRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager, allowDelegation = false)
+            val subSession = SessionPersistence(this, "subtask_${System.currentTimeMillis()}")
+            subSession.initializeLog()
+            val subLoop = AgentLoop(llmClient, subRegistry, subSession, forensicLogger, vectorStore, memoryService)
+            val answer = subLoop.runTask(task, maxTurns = 6)
+            forensicLogger.logEvent("DELEGATE_END", "agent_type=$agentType answer=${answer.take(200)}")
+            org.json.JSONObject()
+                .put("result", answer)
+                .put("subagent", agentType)
+                .toString()
+        } catch (e: Exception) {
+            forensicLogger.logEvent("DELEGATE_ERROR", "agent_type=$agentType failed: ${e.message}")
+            org.json.JSONObject()
+                .put("error", "Sub-agent '$agentType' failed: ${e.message}. Handle the task yourself with the tools above.")
+                .toString()
         }
     }
 
