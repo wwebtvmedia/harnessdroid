@@ -56,21 +56,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val incomingPrompt = intent?.getStringExtra("prompt") ?: intent?.getStringExtra(Intent.EXTRA_TEXT)
-        val customUrl = intent?.getStringExtra("custom_url")
-        val customApiKey = intent?.getStringExtra("custom_api_key")
-        val customApiType = intent?.getStringExtra("custom_api_type")
 
         if (!incomingPrompt.isNullOrBlank()) {
             pendingPrompt = incomingPrompt
         }
 
-        if (!customUrl.isNullOrBlank() || !customApiKey.isNullOrBlank() || !customApiType.isNullOrBlank()) {
-            val configManager = com.ai.harnessdroid.llm.LLMConfigManager(this)
-            configManager.useTree4Five = false
-            if (!customUrl.isNullOrBlank()) configManager.customUrl = customUrl
-            if (!customApiKey.isNullOrBlank()) configManager.customApiKey = customApiKey
-            if (!customApiType.isNullOrBlank()) configManager.customApiType = customApiType
-        }
+        applyRemoteConfigIfPresent(intent)
 
         Intent(this, HarnessService::class.java).also { intent ->
             bindService(intent, connection, Context.BIND_AUTO_CREATE)
@@ -85,11 +76,37 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * Applies custom_url/custom_api_key/custom_api_type launch extras to the LLM config.
+     * Intents redelivered from the Recents/history list are ignored: re-applying a stale
+     * remote configuration would silently switch the agent away from the LLMProvider the
+     * user selected in the settings dialog.
+     */
+    private fun applyRemoteConfigIfPresent(intent: Intent?) {
+        val fromHistory = intent != null &&
+            (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        if (fromHistory) return
+
+        val customUrl = intent?.getStringExtra("custom_url")
+        val customApiKey = intent?.getStringExtra("custom_api_key")
+        val customApiType = intent?.getStringExtra("custom_api_type")
+
+        if (!customUrl.isNullOrBlank() || !customApiKey.isNullOrBlank() || !customApiType.isNullOrBlank()) {
+            val configManager = com.ai.harnessdroid.llm.LLMConfigManager(this)
+            configManager.useTree4Five = false
+            if (!customUrl.isNullOrBlank()) configManager.customUrl = customUrl
+            if (!customApiKey.isNullOrBlank()) configManager.customApiKey = customApiKey
+            if (!customApiType.isNullOrBlank()) configManager.customApiType = customApiType
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // With launchMode="singleTop", a second launch intent (e.g. an external automation
         // passing a prompt) arrives here instead of recreating the activity.
         val incomingPrompt = intent.getStringExtra("prompt") ?: intent.getStringExtra(Intent.EXTRA_TEXT)
+        applyRemoteConfigIfPresent(intent)
         if (!incomingPrompt.isNullOrBlank()) {
             pendingPrompt = incomingPrompt
             maybeRunPendingTask()

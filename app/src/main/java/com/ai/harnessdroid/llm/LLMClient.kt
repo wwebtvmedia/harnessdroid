@@ -32,9 +32,18 @@ open class LLMClient(private val context: Context?) {
     @Volatile
     private var cachedEmbeddingDim: Int? = null
 
+    /** Provider mode the cached dimension was probed under (true = remote HTTP). */
+    @Volatile
+    private var cachedDimForRemoteMode: Boolean = false
+
     internal fun resolveCustomUrl(rawUrl: String, apiType: String = "OpenAI"): String {
-        val trimmed = rawUrl.trim()
+        var trimmed = rawUrl.trim()
         if (trimmed.isEmpty()) return trimmed
+        // A trailing slash means "server root", not an explicit endpoint: strip it so
+        // the OpenAI-compatible suffix below is appended (POSTing to "/" yields 404).
+        while (trimmed.endsWith("/") && !trimmed.endsWith("://")) {
+            trimmed = trimmed.dropLast(1)
+        }
 
         val normalized = when {
             trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true) -> trimmed
@@ -98,80 +107,119 @@ open class LLMClient(private val context: Context?) {
         }
     }
 
+    /** Snapshot of the remote HTTP settings; non-null when the user selected Custom LLM. */
+    internal data class CustomLLMSettings(
+        val url: String,
+        val apiKey: String,
+        val apiType: String,
+        val model: String
+    )
+
+    internal fun customSettings(config: LLMConfigManager): CustomLLMSettings? =
+        if (config.useTree4Five) null
+        else CustomLLMSettings(config.customUrl, config.customApiKey, config.customApiType, config.customModel)
+
     open suspend fun generateText(prompt: String): String = withContext(Dispatchers.IO) {
-        val config = context?.let { LLMConfigManager(it) }
-        if (config != null && !config.useTree4Five) {
-            // Use Custom HTTP LLM Provider
+        val settings = context?.let { LLMConfigManager(it) }?.let { customSettings(it) }
+        generateWithSettings(prompt, settings)
+    }
+
+    /**
+     * Generates from `prompt`, using the remote HTTP LLM when `settings` is non-null.
+     *
+     * When the remote endpoint fails (unreachable, HTTP error, blank URL) the call
+     * FALLS BACK to the local Tree4Five LLMProvider so the agent stays usable;
+     * the remote error text is only surfaced when the local provider fails too.
+     */
+    internal open suspend fun generateWithSettings(prompt: String, settings: CustomLLMSettings?): String {
+        if (settings != null) {
+            val customResult = try {
+                generateViaCustom(settings, prompt)
+            } catch (e: Exception) {
+                "Error connecting to Custom LLM: ${e.message}"
+            }
+            if (!customResult.startsWith("Error")) {
+                return customResult
+            }
+            Log.w(TAG, "Custom LLM unusable (${customResult}); falling back to the local LLMProvider")
+            return try {
+                generateViaLocal(prompt)
+            } catch (_: Exception) {
+                // Both paths failed: surface the remote error, it is the one the user configured.
+                customResult
+            }
+        }
+        return generateViaLocal(prompt)
+    }
+
+    /** One POST to the user-configured OpenAI-compatible endpoint. Error strings mark failures. */
+    internal open suspend fun generateViaCustom(settings: CustomLLMSettings, prompt: String): String {
+        val normalizedUrl = resolveCustomUrl(settings.url, settings.apiType)
+        if (normalizedUrl.isBlank()) {
+            return "Error: Custom LLM URL is empty"
+        }
+
+        val url = java.net.URL(normalizedUrl)
+        val connection = url.openConnection() as java.net.HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.setRequestProperty("Content-Type", "application/json")
+        // Explicit timeouts: the JDK defaults are infinite, so a stalled provider
+        // would hang the AgentLoop forever.
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 120_000
+        if (settings.apiKey.isNotEmpty()) {
+            connection.setRequestProperty("Authorization", "Bearer ${settings.apiKey}")
+        }
+        connection.doOutput = true
+
+        // OpenAI-compatible chat payload; the model name is user-configurable.
+        val payload = org.json.JSONObject().apply {
+            put("model", settings.model)
+            put("messages", org.json.JSONArray().apply {
+                put(org.json.JSONObject().apply {
+                    put("role", "user")
+                    put("content", prompt)
+                })
+            })
+        }
+
+        connection.outputStream.use { os ->
+            val input = payload.toString().toByteArray(Charsets.UTF_8)
+            os.write(input, 0, input.size)
+        }
+
+        val responseCode = connection.responseCode
+        if (responseCode == java.net.HttpURLConnection.HTTP_OK) {
+            val response = connection.inputStream.bufferedReader().use { it.readText() }
+            val jsonResponse = org.json.JSONObject(response)
+            return jsonResponse.optJSONArray("choices")
+                ?.optJSONObject(0)
+                ?.optJSONObject("message")
+                ?.optString("content", "") ?: response
+        }
+        return "Error: Custom LLM API returned HTTP $responseCode"
+    }
+
+    /** Generation through the local Tree4Five binder service. */
+    internal open suspend fun generateViaLocal(prompt: String): String {
+        val service = getService()
+        return suspendCancellableCoroutine { continuation ->
+            val callback = object : ILLMCallback.Stub() {
+                override fun onTokenReceived(token: String) {}
+                override fun onGenerationComplete(fullText: String) {
+                    if (continuation.isActive) {
+                        continuation.resume(fullText)
+                    }
+                }
+            }
             try {
-                val normalizedUrl = resolveCustomUrl(config.customUrl, config.customApiType)
-                if (normalizedUrl.isBlank()) {
-                    return@withContext "Error: Custom LLM URL is empty"
-                }
-
-                val url = java.net.URL(normalizedUrl)
-                val connection = url.openConnection() as java.net.HttpURLConnection
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json")
-                // Explicit timeouts: the JDK defaults are infinite, so a stalled provider
-                // would hang the AgentLoop forever.
-                connection.connectTimeout = 15_000
-                connection.readTimeout = 120_000
-                if (config.customApiKey.isNotEmpty()) {
-                    connection.setRequestProperty("Authorization", "Bearer ${config.customApiKey}")
-                }
-                connection.doOutput = true
-
-                // OpenAI-compatible chat payload; the model name is user-configurable.
-                val payload = org.json.JSONObject().apply {
-                    put("model", config.customModel)
-                    put("messages", org.json.JSONArray().apply {
-                        put(org.json.JSONObject().apply {
-                            put("role", "user")
-                            put("content", prompt)
-                        })
-                    })
-                }
-
-                connection.outputStream.use { os ->
-                    val input = payload.toString().toByteArray(Charsets.UTF_8)
-                    os.write(input, 0, input.size)
-                }
-
-                val responseCode = connection.responseCode
-                if (responseCode == java.net.HttpURLConnection.HTTP_OK) {
-                    val response = connection.inputStream.bufferedReader().use { it.readText() }
-                    val jsonResponse = org.json.JSONObject(response)
-                    return@withContext jsonResponse.optJSONArray("choices")
-                        ?.optJSONObject(0)
-                        ?.optJSONObject("message")
-                        ?.optString("content", "") ?: response
-                } else {
-                    return@withContext "Error: Custom LLM API returned HTTP $responseCode"
+                service.generateTextStream(prompt, callback)
+                continuation.invokeOnCancellation {
+                    val keepAlive = callback
                 }
             } catch (e: Exception) {
-                return@withContext "Error connecting to Custom LLM: ${e.message}"
-            }
-        } else {
-            // Use local Tree4Five Service
-            val service = getService()
-            suspendCancellableCoroutine { continuation ->
-                val callback = object : ILLMCallback.Stub() {
-                    override fun onTokenReceived(token: String) {}
-                    override fun onGenerationComplete(fullText: String) {
-                        if (continuation.isActive) {
-                            continuation.resume(fullText)
-                        }
-                    }
-                }
-                try {
-                    service.generateTextStream(prompt, callback)
-                    continuation.invokeOnCancellation {
-                        val keepAlive = callback
-                    }
-                } catch (e: Exception) {
-                    if (continuation.isActive) {
-                        continuation.resumeWithException(e)
-                    }
+                if (continuation.isActive) {
+                    continuation.resumeWithException(e)
                 }
             }
         }
@@ -183,10 +231,14 @@ open class LLMClient(private val context: Context?) {
      * model without a usable token_embd). Callers fall back to text mode.
      */
     open suspend fun embeddingDim(): Int {
-        cachedEmbeddingDim?.let { return it }
         val config = context?.let { LLMConfigManager(it) }
-        if (config != null && !config.useTree4Five) {
+        val remoteMode = config?.useTree4Five == false
+        // The dimension only holds for the provider mode it was probed in: switching
+        // between the local provider and a remote HTTP LLM must force a re-probe.
+        cachedEmbeddingDim?.let { if (remoteMode == cachedDimForRemoteMode) return it }
+        if (remoteMode) {
             cachedEmbeddingDim = -1
+            cachedDimForRemoteMode = true
             return -1
         }
         return try {
@@ -194,11 +246,13 @@ open class LLMClient(private val context: Context?) {
             val dim = service.embeddingDim
             val resolved = if (dim > 0) dim else -1
             cachedEmbeddingDim = resolved
+            cachedDimForRemoteMode = remoteMode
             resolved
         } catch (t: Throwable) {
             // Older provider build (unknown binder transaction), dead service...
             Log.w(TAG, "embeddingDim probe failed: ${t.message}")
             cachedEmbeddingDim = -1
+            cachedDimForRemoteMode = remoteMode
             -1
         }
     }
