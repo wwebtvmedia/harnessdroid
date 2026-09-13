@@ -173,8 +173,11 @@ open class LLMClient(private val context: Context?) {
         connection.doOutput = true
 
         // OpenAI-compatible chat payload; the model name is user-configurable.
+        // temperature=0: the FSM makes tool-picking decisions, sampling randomness
+        // there (Ollama defaults to 0.8) makes tiny models skip steps at random.
         val payload = org.json.JSONObject().apply {
             put("model", settings.model)
+            put("temperature", 0)
             put("messages", org.json.JSONArray().apply {
                 put(org.json.JSONObject().apply {
                     put("role", "user")

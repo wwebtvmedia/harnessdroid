@@ -185,6 +185,59 @@ open class ToolRegistry(
                 }
             }
         """.trimIndent()
+        val readScreenTool = """
+            {
+                "name": "read_screen",
+                "description": "Read the text currently visible on the screen with the [left,top][right,bottom] bounds of each line. Use it AFTER launch_app to see what the app shows (e.g. the inbox list in Gmail: senders, subjects and snippets).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        """.trimIndent()
+        val tapScreenTool = """
+            {
+                "name": "tap_screen",
+                "description": "Tap the screen at the given coordinates. Use the [left,top][right,bottom] bounds from read_screen to pick the center of the element to tap (e.g. tap the first email in the inbox to open it).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": { "type": "integer", "description": "X coordinate in screen pixels" },
+                        "y": { "type": "integer", "description": "Y coordinate in screen pixels" }
+                    },
+                    "required": ["x", "y"]
+                }
+            }
+        """.trimIndent()
+        val swipeScreenTool = """
+            {
+                "name": "swipe_screen",
+                "description": "Swipe from (x1,y1) to (x2,y2) to scroll the visible list, e.g. scroll down an inbox to see older emails.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x1": { "type": "integer", "description": "Start X coordinate" },
+                        "y1": { "type": "integer", "description": "Start Y coordinate" },
+                        "x2": { "type": "integer", "description": "End X coordinate" },
+                        "y2": { "type": "integer", "description": "End Y coordinate" }
+                    },
+                    "required": ["x1", "y1", "x2", "y2"]
+                }
+            }
+        """.trimIndent()
+        val tapElementTool = """
+            {
+                "name": "tap_element",
+                "description": "Tap the on-screen element whose text matches (part of) the given label, e.g. tap_element with text='GOT IT' or the subject of an email row. Easier and more reliable than computing tap_screen coordinates.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string", "description": "Visible text (or part of it) of the element to tap" }
+                    },
+                    "required": ["text"]
+                }
+            }
+        """.trimIndent()
         allSchemas.put(JSONObject(builtInAskHuman))
         allSchemas.put(JSONObject(listIntentsTool))
         allSchemas.put(JSONObject(osInfoTool))
@@ -192,6 +245,10 @@ open class ToolRegistry(
         allSchemas.put(JSONObject(listCompatibleIntentAppsTool))
         allSchemas.put(JSONObject(listSkillCommandsTool))
         allSchemas.put(JSONObject(skillAgentCommandTool))
+        allSchemas.put(JSONObject(readScreenTool))
+        allSchemas.put(JSONObject(tapScreenTool))
+        allSchemas.put(JSONObject(swipeScreenTool))
+        allSchemas.put(JSONObject(tapElementTool))
         
         // Removed mock read_emails tool. Real tools will be discovered via Intent.
 
@@ -428,6 +485,88 @@ open class ToolRegistry(
         }
 
 
+
+        if (toolName == "read_screen") {
+            if (!com.ai.harnessdroid.core.ScreenReaderService.isReady()) {
+                // Open the settings page so the user can enable the service in one tap;
+                // the error text tells the LLM what happened so it can pause and wait.
+                com.ai.harnessdroid.core.ScreenReaderService.openSettings(context ?: return@withContext
+                    JSONObject().put("error", "No context; cannot read the screen").toString())
+                return@withContext JSONObject()
+                    .put("error", "Screen reader not enabled. I opened Settings > Accessibility: enable 'Harness Droid Screen Reader', then retry read_screen.")
+                    .toString()
+            }
+            return@withContext JSONObject().put("screen", com.ai.harnessdroid.core.ScreenReaderService.readScreen()).toString()
+        }
+
+        if (toolName == "tap_screen") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val x = args.optInt("x", Int.MIN_VALUE)
+            val y = args.optInt("y", Int.MIN_VALUE)
+            if (x == Int.MIN_VALUE || y == Int.MIN_VALUE) {
+                return@withContext JSONObject().put("error", "tap_screen requires integer x and y (use read_screen bounds).").toString()
+            }
+            if (!com.ai.harnessdroid.core.ScreenReaderService.isReady()) {
+                return@withContext JSONObject().put("error", "Screen reader not enabled; cannot tap. Enable it in Settings > Accessibility.").toString()
+            }
+            val ok = com.ai.harnessdroid.core.ScreenReaderService.tap(x, y)
+            return@withContext (if (ok) JSONObject().put("result", "Tapped ($x,$y)") else JSONObject().put("error", "Gesture cancelled; the screen may have changed. Run read_screen again.")).toString()
+        }
+
+        if (toolName == "tap_element") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val text = args.optString("text", "").trim()
+            if (text.isEmpty()) {
+                return@withContext JSONObject().put("error", "tap_element requires 'text' (the visible label of the element).").toString()
+            }
+            if (!com.ai.harnessdroid.core.ScreenReaderService.isReady()) {
+                return@withContext JSONObject().put("error", "Screen reader not enabled; cannot tap. Enable it in Settings > Accessibility.").toString()
+            }
+            val ok = com.ai.harnessdroid.core.ScreenReaderService.tapElement(text)
+            return@withContext (if (ok) JSONObject().put("result", "Tapped element '$text'")
+                else JSONObject().put("error", "No tappable element containing '$text' found on screen. Run read_screen to see the current labels.")).toString()
+        }
+
+        if (toolName == "swipe_screen") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val x1 = args.optInt("x1", Int.MIN_VALUE); val y1 = args.optInt("y1", Int.MIN_VALUE)
+            val x2 = args.optInt("x2", Int.MIN_VALUE); val y2 = args.optInt("y2", Int.MIN_VALUE)
+            if (x1 == Int.MIN_VALUE || y1 == Int.MIN_VALUE || x2 == Int.MIN_VALUE || y2 == Int.MIN_VALUE) {
+                return@withContext JSONObject().put("error", "swipe_screen requires x1,y1,x2,y2 integers.").toString()
+            }
+            if (!com.ai.harnessdroid.core.ScreenReaderService.isReady()) {
+                return@withContext JSONObject().put("error", "Screen reader not enabled; cannot swipe. Enable it in Settings > Accessibility.").toString()
+            }
+            val ok = com.ai.harnessdroid.core.ScreenReaderService.swipe(x1, y1, x2, y2)
+            return@withContext (if (ok) JSONObject().put("result", "Swiped ($x1,$y1)->($x2,$y2)") else JSONObject().put("error", "Gesture cancelled. Run read_screen again.")).toString()
+        }
+
+        if (toolName == "send_android_intent") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val action = args.optString("action", "").trim()
+            val dataUri = args.optString("data_uri", "").trim()
+            if (action.isEmpty()) {
+                return@withContext JSONObject().put("error", "send_android_intent requires an 'action' (e.g. 'android.intent.action.VIEW').").toString()
+            }
+            val intent = Intent(action).apply {
+                if (dataUri.isNotEmpty()) {
+                    data = try { android.net.Uri.parse(dataUri) } catch (_: Exception) { null }
+                }
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val target = context?.packageManager?.resolveActivity(intent, 0)?.activityInfo?.packageName
+            // Security Guard: firing an external intent is exactly the kind of action the human must approve.
+            val isApproved = interactionManager?.requireIntentPermission(toolName, target ?: action, jsonArgs) ?: true
+            if (!isApproved) {
+                return@withContext JSONObject().put("error", "User denied permission to send this intent.").toString()
+            }
+            return@withContext try {
+                context?.startActivity(intent)
+                JSONObject().put("result", "Intent $action${if (dataUri.isNotEmpty()) " $dataUri" else ""} sent").toString()
+            } catch (e: Exception) {
+                JSONObject().put("error", "Failed to send intent: ${e.message}").toString()
+            }
+        }
 
         if (toolName == "launch_app") {
             val appNameRaw = JSONObject(jsonArgs).optString("app_name", "")

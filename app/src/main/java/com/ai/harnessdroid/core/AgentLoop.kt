@@ -235,16 +235,25 @@ AVAILABLE TOOLS:
 $filteredToolSummary
 
 RULES:
+- You have NO direct perception of this device: you cannot see the screen or any app content on your own. Every task that involves the device (read mail, open an app, search the web, ...) REQUIRES tool calls.
+- Do not repeat a tool call that already returned the same result. Change strategy: to press a visible button, call tap_screen with the CENTER of its [left,top][right,bottom] bounds.
 - You must write your step-by-step plan inside a <PLAN> block.
 - As the final line INSIDE your <PLAN> block, you MUST output exactly: harness have to use <tool_name>
-- If you have enough information to answer the user directly without a tool, output: NONE inside the <PLAN> block.
+- Output NONE inside the <PLAN> block ONLY when the goal is a pure knowledge or text question that needs no device action at all.
 - Always respond in English, regardless of the language of the conversation history.
 
-EXAMPLE OUTPUT FORMAT:
+EXAMPLE OUTPUT FORMAT (goal "Read my latest email"):
 <PLAN>
-1. Call get_os_info to check the device version.
-2. Provide the OS information to the user.
-harness have to use get_os_info
+1. Call launch_app to open Gmail.
+2. Call read_screen to see the inbox.
+3. Call tap_element on the most recent email row, then read_screen again to read it.
+harness have to use launch_app
+</PLAN>
+(Note: the tool after 'harness have to use' is the ONE to run next — the first step of your plan.)
+
+EXAMPLE OUTPUT FORMAT (goal "What is the capital of France?"):
+<PLAN>
+NONE
 </PLAN>
 </SYSTEM>
 
@@ -462,10 +471,12 @@ Do NOT output any other text or explanation.
         forensicLogger.logEvent("FILTER_START", "Filtering tools for preference: $preferredRaw")
 
         // Core generic tools stay visible regardless of capability hints: a small LLM that
-        // changes strategy mid-task must still be able to launch an app or send an intent.
+        // changes strategy mid-task must still be able to launch an app, see the screen,
+        // or send an intent.
         val coreTools = setOf(
             "launch_app", "send_android_intent", "list_installed_apps",
-            "list_compatible_intent_apps", "get_os_info", "ask_human_for_input"
+            "list_compatible_intent_apps", "get_os_info", "ask_human_for_input",
+            "read_screen", "tap_screen", "swipe_screen", "tap_element"
         )
 
         val tokens = preferred.split(Regex("\\s+|[,\\-]"))

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="screen_reader_description">Lets the Harness Droid agent read the screen and interact with apps (e.g. read your Gmail inbox) on your behalf.</string>
+</resources>
