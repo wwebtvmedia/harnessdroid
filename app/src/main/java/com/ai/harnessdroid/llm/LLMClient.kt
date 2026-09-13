@@ -124,6 +124,84 @@ open class LLMClient(private val context: Context?) {
         generateWithSettings(prompt, settings)
     }
 
+    /** Context window (tokens) when the remote value is unknown; safe lower bound. */
+    private val DEFAULT_CONTEXT_TOKENS = 2048
+    /** Ollama's num_ctx default when the Modelfile does not set one explicitly. */
+    private val OLLAMA_DEFAULT_NUM_CTX = 4096
+    /** LLMProvider builds older than v1.1.4 expose no getContextLength: 2048 is
+     *  the N_CTX constant their engine was built with. */
+    private val LOCAL_FALLBACK_CONTEXT_TOKENS = 2048
+
+    @Volatile
+    private var cachedRemoteContextTokens: Int? = null
+
+    /**
+     * Best-effort context window (in tokens) of the ACTIVE provider, so callers
+     * can size their prompts to the model instead of a constant. Remote: query
+     * Ollama's /api/show (an explicit num_ctx wins; otherwise Ollama's runtime
+     * default capped by the model's GGUF training context). Local: the AIDL
+     * getContextLength() that LLMProvider reads from the loaded GGUF. Never throws.
+     */
+    suspend fun getContextTokens(): Int = withContext(Dispatchers.IO) {
+        val settings = context?.let { LLMConfigManager(it) }?.let { customSettings(it) }
+        if (settings != null) {
+            cachedRemoteContextTokens
+                ?: queryOllamaContextTokens(settings).also { cachedRemoteContextTokens = it }
+                ?: DEFAULT_CONTEXT_TOKENS
+        } else {
+            try {
+                getService().getContextLength().takeIf { it > 0 }
+            } catch (_: Exception) {
+                // Older provider build: the transaction is unknown to the Binder.
+                null
+            } ?: LOCAL_FALLBACK_CONTEXT_TOKENS
+        }
+    }
+
+    private fun queryOllamaContextTokens(settings: CustomLLMSettings): Int? {
+        val base = baseUrlOf(settings.url) ?: return null
+        return try {
+            val conn = (java.net.URL("$base/api/show").openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 4000
+                readTimeout = 4000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
+            conn.outputStream.use { it.write("""{"model":"${settings.model}"}""".toByteArray()) }
+            val body = conn.inputStream.use { it.readBytes().decodeToString() }
+            val json = org.json.JSONObject(body)
+            val explicit = Regex("num_ctx\\s+(\\d+)").find(json.optString("parameters"))
+                ?.groupValues?.get(1)?.toIntOrNull()
+            val train = json.optJSONObject("model_info")?.let { mi ->
+                mi.keys().asSequence()
+                    .filter { it.endsWith(".context_length") }
+                    .map { mi.optInt(it) }
+                    .firstOrNull { it > 0 }
+            }
+            (explicit ?: train?.let { minOf(it, OLLAMA_DEFAULT_NUM_CTX) } ?: OLLAMA_DEFAULT_NUM_CTX)
+                .takeIf { it > 0 }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun baseUrlOf(rawUrl: String): String? {
+        return try {
+            var t = rawUrl.trim()
+            if (t.isEmpty()) return null
+            while (t.endsWith("/") && !t.endsWith("://")) t = t.dropLast(1)
+            if (!t.startsWith("http://", ignoreCase = true) && !t.startsWith("https://", ignoreCase = true)) {
+                t = "http://$t"
+            }
+            val uri = java.net.URI(t)
+            val port = if (uri.port > 0) uri.port else if (uri.scheme.equals("https", true)) 443 else 80
+            "${uri.scheme}://${uri.host}:$port"
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /**
      * Generates from `prompt`, using the remote HTTP LLM when `settings` is non-null.
      *
@@ -178,6 +256,9 @@ open class LLMClient(private val context: Context?) {
         val payload = org.json.JSONObject().apply {
             put("model", settings.model)
             put("temperature", 0)
+            // Cap runaway generations: a tiny model that has already derailed will
+            // otherwise ramble for thousands of tokens (mixed-language word salad).
+            put("max_tokens", 600)
             put("messages", org.json.JSONArray().apply {
                 put(org.json.JSONObject().apply {
                     put("role", "user")

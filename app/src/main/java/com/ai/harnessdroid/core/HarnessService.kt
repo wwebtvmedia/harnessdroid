@@ -212,27 +212,14 @@ class HarnessService : Service(), HumanInteractionHandler {
             return answer
         }
 
-        // No human answer in time: fall back to the caller-provided default, or
-        // let the LLM give its best-guess answer so the task keeps making
-        // progress instead of blocking forever.
-        val finalChoice = effectiveDefault ?: try {
-            val llmPrompt = """
-                <SYSTEM>
-                You are a helpful assistant. The user did not answer a clarification question within the allowed time.
-                Provide the most likely answer to the clarification, but keep it brief and decisive.
-                </SYSTEM>
-
-                <QUESTION>
-                ${request.prompt}
-                </QUESTION>
-            """.trimIndent()
-            llmClient.generateText(llmPrompt).trim().ifBlank { null }
-        } catch (_: Exception) {
-            null
-        }
+        // No human answer in time: fall back to the caller-provided default. An
+        // LLM-invented answer used to pollute the context with a fabricated reply
+        // (e.g. inventing the sender of an email the agent was asked to read), so
+        // the neutral notice below keeps the task moving without misleading it.
+        val finalChoice = effectiveDefault
 
         val chosenAnswer = finalChoice ?: "No clarification was provided by the human."
-        forensicLogger.logEvent("INPUT_TIMEOUT", "No human answer; using ${if (effectiveDefault != null) "default" else "LLM fallback"}: $chosenAnswer")
+        forensicLogger.logEvent("INPUT_TIMEOUT", "No human answer; using ${if (effectiveDefault != null) "default" else "neutral notice"}: $chosenAnswer")
         clarificationStore.save(ClarificationRecord(
             id = requestId,
             prompt = request.prompt,
@@ -241,7 +228,7 @@ class HarnessService : Service(), HumanInteractionHandler {
             expiresAt = System.currentTimeMillis() + request.timeoutMs,
             answeredAt = System.currentTimeMillis(),
             finalAnswer = chosenAnswer,
-            source = if (effectiveDefault != null) "default" else "llm"
+            source = if (effectiveDefault != null) "default" else "timeout"
         ))
         return chosenAnswer
     }

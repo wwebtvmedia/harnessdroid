@@ -87,31 +87,53 @@ class ScreenReaderService : AccessibilityService() {
          * e.g. tapElement("GOT IT") or a mail row. Clicking by label is far more reliable
          * for a small LLM than picking the center of printed bounds.
          */
-        fun tapElement(text: String): Boolean {
+        suspend fun tapElement(text: String): Boolean {
             val service = instance ?: return false
             val root = service.rootInActiveWindow ?: return false
             val needle = text.trim().lowercase()
             if (needle.isEmpty()) return false
 
-            val queue = ArrayDeque<AccessibilityNodeInfo>()
-            queue.add(root)
-            var visited = 0
-            while (queue.isNotEmpty() && visited < MAX_NODES * 2) {
-                val node = queue.removeFirst()
-                visited++
-                val label = (node.text?.toString() ?: "").lowercase()
-                val desc = (node.contentDescription?.toString() ?: "").lowercase()
-                if ((label.contains(needle) || desc.contains(needle))) {
-                    // Prefer the clickable ancestor so containers (list rows, buttons) react.
-                    var target: AccessibilityNodeInfo? = node
-                    while (target != null && !target.isClickable) {
-                        target = target.parent
+            // Tiny LLMs paraphrase labels ("Veuilez confirmer votre inscription" for a
+            // row actually labelled "... votre demande d'inscription"): after the exact
+            // pass fails, retry letting ANY significant word of the needle match.
+            val words = needle.split(Regex("[^a-z0-9àâäéèêëîïôöùûüç]+"))
+                .filter { it.length >= 4 }
+                .toSet()
+
+            fun matches(label: String, desc: String, fullOnly: Boolean): Boolean {
+                if (label.contains(needle) || desc.contains(needle)) return true
+                if (fullOnly) return false
+                return words.any { label.contains(it) || desc.contains(it) }
+            }
+
+            for (fullOnly in listOf(true, false)) {
+                val queue = ArrayDeque<AccessibilityNodeInfo>()
+                queue.add(root)
+                var visited = 0
+                while (queue.isNotEmpty() && visited < MAX_NODES * 2) {
+                    val node = queue.removeFirst()
+                    visited++
+                    val label = (node.text?.toString() ?: "").lowercase()
+                    val desc = (node.contentDescription?.toString() ?: "").lowercase()
+                    if (matches(label, desc, fullOnly)) {
+                        // Prefer the clickable ancestor so containers (list rows, buttons) react.
+                        var target: AccessibilityNodeInfo? = node
+                        while (target != null && !target.isClickable) {
+                            target = target.parent
+                        }
+                        val finalTarget = target ?: node
+                        if (finalTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+                        // Some views expose no clickable flag (nor a clickable ancestor) yet
+                        // still respond to a real touch: dispatch a gesture at the matched
+                        // node's center instead of reporting the element as missing.
+                        val bounds = Rect().also { node.getBoundsInScreen(it) }
+                        if (bounds.width() > 0 && bounds.height() > 0) {
+                            if (tap(bounds.exactCenterX().toInt(), bounds.exactCenterY().toInt())) return true
+                        }
                     }
-                    val finalTarget = target ?: node
-                    if (finalTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
-                }
-                for (i in 0 until node.childCount) {
-                    node.getChild(i)?.let { queue.add(it) }
+                    for (i in 0 until node.childCount) {
+                        node.getChild(i)?.let { queue.add(it) }
+                    }
                 }
             }
             return false

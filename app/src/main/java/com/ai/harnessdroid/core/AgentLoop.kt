@@ -36,7 +36,19 @@ class AgentLoop(
     private var sessionLog = mutableListOf<SessionEvent>()
     // Compression and mitigation configuration. Read from system properties/env vars so JVM
     // unit tests can override them; on a real Android process these resolve to the defaults.
-    private val MAX_CONTEXT_CHARS = (System.getProperty("HARNESS_MAX_CONTEXT_CHARS") ?: System.getenv("HARNESS_MAX_CONTEXT_CHARS") ?: "3000").toInt()
+    // Inline-history budget: the model's context window decides it (via
+    // LLMClient.getContextTokens) unless explicitly overridden. ~3 chars per
+    // token for mixed prose/JSON screen dumps; probed once per task.
+    private val CHARS_PER_TOKEN = 3
+    private val configuredMaxContextChars =
+        (System.getProperty("HARNESS_MAX_CONTEXT_CHARS") ?: System.getenv("HARNESS_MAX_CONTEXT_CHARS"))?.toIntOrNull()
+    @Volatile
+    private var dynamicMaxContextChars = 3000
+    private val MAX_CONTEXT_CHARS: Int
+        get() = configuredMaxContextChars ?: dynamicMaxContextChars
+    /** Newest session events never compressed: the freshest tool result (e.g. the
+     *  last read_screen dump) must stay verbatim or the agent acts blind. */
+    private val RECENT_EVENTS_KEPT = 3
     private val COMPRESSION_STRATEGY = System.getProperty("HARNESS_COMPRESSION_STRATEGY") ?: System.getenv("HARNESS_COMPRESSION_STRATEGY") ?: "ach" // options: single, ach
     private val USE_MOCK_LLM = (System.getProperty("HARNESS_USE_MOCK_LLM") ?: System.getenv("HARNESS_USE_MOCK_LLM") ?: "0") == "1"
     private val CONTEXT_MODE = (System.getProperty("HARNESS_CONTEXT_MODE") ?: System.getenv("HARNESS_CONTEXT_MODE") ?: "embd").lowercase()
@@ -95,6 +107,16 @@ class AgentLoop(
         forensicLogger.logEvent("LOOP_INIT", "Discovering tools...")
         val toolSchemasRaw = toolRegistry.discoverAndBindTools()
         val toolsArray = try { JSONArray(toolSchemasRaw) } catch (e: Exception) { JSONArray() }
+
+        // Size the inline-history budget to the ACTIVE model's context window.
+        if (configuredMaxContextChars == null) {
+            dynamicMaxContextChars = try {
+                (llmClient.getContextTokens() * CHARS_PER_TOKEN).coerceIn(1500, 32000)
+            } catch (_: Exception) {
+                3000
+            }
+            forensicLogger.logEvent("CONTEXT_BUDGET", "max_inline_chars=$dynamicMaxContextChars")
+        }
         
         // Harness simplifies the schema for the tiny LLM
         val toolSummaryList = buildToolSummary(toolsArray)
@@ -122,6 +144,11 @@ class AgentLoop(
         val generalQuestionPrompt = """
     <SYSTEM>
     You are an AI assistant. Given the task below, if you need a short clarifying question to pick the best tool, output that question only, in English. If no clarification is needed, output NO_QUESTION.
+
+    Rules:
+    - NEVER ask a question whose answer is exactly what the task asks you to FIND OUT (e.g. for "read my latest email and tell me who sent it", do NOT ask "who sent it?" — you must discover it using tools).
+    - Ask only when the task cannot START at all without a missing parameter (e.g. "which app?", "which file?").
+    - When in doubt, output NO_QUESTION.
     </SYSTEM>
 
     <TASK>
@@ -146,6 +173,12 @@ class AgentLoop(
         sessionPersistence.flushLog(sessionLog)
 
         var turns = 0
+        // Tracks whether launch_app already succeeded this task: a later bare app
+        // mention then means "look at it" (read_screen), not "open it" again.
+        var appLaunchedSuccessfully = false
+        // Last tool actually executed: the bare-app-mention rescue advances step by
+        // step (launch -> read -> tap) instead of repeating the same call forever.
+        var lastExecutedTool: String? = null
         var finalResult = ""
 
         while (turns < maxTurns) {
@@ -275,7 +308,27 @@ Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
             var toolChoice = rawToolChoice
             
             // Harness applies robust validation against the filtered tool set
-            toolChoice = extractToolName(toolChoice, filteredToolsArray)
+            toolChoice = extractToolName(toolChoice, filteredToolsArray, appLaunchedSuccessfully, lastExecutedTool)
+
+            // The model tried to pick a tool but named none of the available ones (e.g.
+            // "harness have to use gmail"), or derailed into unparseable text: one
+            // corrective retry beats skipping straight to the final answer, which reads
+            // as a fabricated result to the user. A deliberate NONE — the model deciding
+            // it can already answer from the history — is respected and NOT retried.
+            val noneIsDeliberate = rawToolChoice.lowercase().let { lower ->
+                lower.endsWith("none") ||
+                    lower.lines().lastOrNull { it.isNotBlank() }
+                        ?.replace(Regex("[^a-zA-Z]"), "")?.lowercase() == "none"
+            }
+            if (toolChoice == "NONE" && !noneIsDeliberate) {
+                val retryPrompt = step1Prompt +
+                    "\n\nYour previous reply did not name a tool from the list. " +
+                    "Reply with ONE final line: harness have to use <tool_name>, " +
+                    "where <tool_name> is EXACTLY one of the tool names listed above (for example launch_app)."
+                val retryRaw = generateWithContext(latentPrefix, memoryText + retryPrompt, "FSM_STATE_1_RETRY").trim()
+                forensicLogger.logEvent("FSM_STATE_1_RETRY", "LLM replied: $retryRaw")
+                toolChoice = extractToolName(retryRaw, filteredToolsArray, appLaunchedSuccessfully, lastExecutedTool)
+            }
             
             if (toolChoice == "NONE") {
                 // FSM STATE 1b: Final Answer Generation
@@ -289,6 +342,7 @@ Review the CONVERSATION HISTORY below to see the results from any tools you used
 Synthesize these results and provide the final answer to the user in English, regardless of the language of the conversation history.
 If the user asks about your tools or capabilities, list them based on the tools above.
 Do NOT talk about needing or not needing tools. Just answer the user directly.
+Answer in plain sentences (1-3 lines). Do NOT output a <PLAN> block.
 </SYSTEM>
 
 <CONVERSATION_HISTORY>
@@ -305,6 +359,30 @@ Provide the final answer to the user based on the conversation and tool results 
                 
                 forensicLogger.logEvent("FSM_STATE_1B", "Asking LLM for final answer.")
                 finalResult = generateWithContext(latentPrefix, memoryText + step1bPrompt, "FSM_STATE_1B").trim()
+                // Tiny models often ignore the "no plan" rule and echo a <PLAN> block
+                // (or numbered steps) instead of answering. Strip that scaffolding;
+                // if nothing spoken remains, one corrective retry.
+                finalResult = sanitizeFinalAnswer(finalResult)
+                // A "final answer" that still names internal tools is a plan echo
+                // the sanitizer could not fully strip: force the corrective retry.
+                val echoesTools = (0 until toolsArray.length()).any {
+                    finalResult.lowercase().contains(toolsArray.getJSONObject(it).optString("name").lowercase())
+                }
+                if (finalResult.isBlank() || echoesTools) {
+                    val retry1bPrompt = step1bPrompt +
+                        "\nYour previous reply was a plan, not an answer. Reply ONLY with the " +
+                        "final answer to the user in 1-2 plain English sentences, using the facts " +
+                        "in the conversation history (names, senders, subjects). " +
+                        "No plan, no steps, no tool names."
+                    val retry1b = sanitizeFinalAnswer(
+                        generateWithContext(latentPrefix, memoryText + retry1bPrompt, "FSM_STATE_1B_RETRY").trim()
+                    )
+                    if (retry1b.isNotBlank()) {
+                        finalResult = retry1b
+                        forensicLogger.logEvent("FSM_STATE_1B_RETRY", "recovered final answer after plan echo")
+                    }
+                }
+                if (finalResult.isBlank()) finalResult = "I could not determine the answer; the model reply was not usable."
                 sessionLog.add(SessionEvent("assistant", finalResult))
                 sessionPersistence.flushLog(sessionLog)
                 break
@@ -339,6 +417,10 @@ Do NOT output any other text or explanation.
             
             // FSM STATE 3: Tool Execution (Harness)
             val toolResultJson = toolRegistry.executeTool(toolChoice, arguments)
+            lastExecutedTool = toolChoice
+            if (toolChoice == "launch_app" && toolResultJson.contains("Successfully launched")) {
+                appLaunchedSuccessfully = true
+            }
             
             forensicLogger.logEvent("TOOL_RESULT", "Result from '$toolChoice': $toolResultJson")
             sessionLog.add(SessionEvent("tool", toolResultJson, toolName = toolChoice))
@@ -389,18 +471,53 @@ Do NOT output any other text or explanation.
         return sb.toString()
     }
     
-    private fun extractToolName(llmOutput: String, toolsArray: JSONArray): String {
+    // Small models drop words: "harness have to use", "harness to use", "harness must
+    // use" all express the same intent, so match the phrase tolerantly.
+    private val toolTriggerRegex = Regex("harness\\s+(?:have\\s+|must\\s+|has\\s+)?to\\s+use")
+
+    /**
+     * Resolves a bare app mention ("gmail") to the action the agent still needs:
+     * open the app on first mention, then READ it, then ACT on the dump. Relaunching
+     * or re-reading in a loop is what previously burned all turns (logs 17:55/18:11).
+     */
+    private fun appIntentTool(appAlreadyLaunched: Boolean, toolsArray: JSONArray, lastExecutedTool: String?): String {
+        if (!appAlreadyLaunched) return "launch_app"
+        fun has(name: String) = (0 until toolsArray.length()).any { toolsArray.getJSONObject(it).optString("name") == name }
+        return when (lastExecutedTool) {
+            "read_screen" -> if (has("tap_element")) "tap_element" else "read_screen"
+            // After a tap the app shows the opened item: "look at gmail" then means
+            // READ what is on screen (e.g. the sender of the opened email).
+            "tap_element" -> if (has("read_screen")) "read_screen" else "NONE"
+            else -> if (has("read_screen")) "read_screen" else "launch_app"
+        }
+    }
+
+    private fun extractToolName(
+        llmOutput: String,
+        toolsArray: JSONArray,
+        appAlreadyLaunched: Boolean = false,
+        lastExecutedTool: String? = null
+    ): String {
         val trimmed = llmOutput.trim()
         val lowerOut = trimmed.lowercase()
 
-        val triggerPhrase = "harness have to use"
-        if (lowerOut.contains(triggerPhrase)) {
-            val afterPhrase = lowerOut.substringAfterLast(triggerPhrase).trim()
+        val triggerMatch = toolTriggerRegex.find(lowerOut)
+        if (triggerMatch != null) {
+            val afterPhrase = lowerOut.substring(triggerMatch.range.last + 1).trim()
             // Find which tool name follows
             for (i in 0 until toolsArray.length()) {
                 val name = toolsArray.getJSONObject(i).optString("name")
                 if (afterPhrase.startsWith(name.lowercase()) || afterPhrase.contains(name.lowercase())) {
                     return name
+                }
+            }
+            // A small LLM often writes the app name ("harness have to use gmail") instead
+            // of a tool name: the intent is to open that app, i.e. launch_app — or, if
+            // the app was already launched, to LOOK at it, i.e. read_screen.
+            if (afterPhrase.length <= 60) {
+                val hasLaunchApp = (0 until toolsArray.length()).any { toolsArray.getJSONObject(it).optString("name") == "launch_app" }
+                if (hasLaunchApp && toolRegistry.knownAppLabels().any { afterPhrase.contains(it.lowercase()) }) {
+                    return appIntentTool(appAlreadyLaunched, toolsArray, lastExecutedTool)
                 }
             }
         }
@@ -421,12 +538,47 @@ Do NOT output any other text or explanation.
             }
         }
 
+        // Last intent rescue: a derailed small model may name just the app ("Calling
+        // Gmail...", "<harness toollaunch_gmail>", "<harness_app name=\"Gmail\">") with
+        // no trigger phrase at all. Check the short FULL output first, then a short
+        // LAST line (the model often appends its tag under a long plan).
+        val hasLaunchApp = (0 until toolsArray.length()).any { toolsArray.getJSONObject(it).optString("name") == "launch_app" }
+        if (hasLaunchApp) {
+            val lastLine = trimmed.lines().lastOrNull { it.isNotBlank() }?.lowercase()?.trim() ?: ""
+            val candidates = mutableListOf(lowerOut, lastLine)
+            for (candidate in candidates) {
+                if (candidate.length <= 120 &&
+                    (0 until toolsArray.length()).none { candidate.contains(toolsArray.getJSONObject(it).optString("name").lowercase()) } &&
+                    toolRegistry.knownAppLabels().any { candidate.contains(it.lowercase()) }
+                ) {
+                    return appIntentTool(appAlreadyLaunched, toolsArray, lastExecutedTool)
+                }
+            }
+        }
+
         // If still no match, be conservative and return NONE (final-answer path) instead of
         // executing an arbitrary tool. The old "first available tool" fallback forced unwanted
         // tool executions in production whenever the LLM output went off-format.
         return "NONE"
     }
     
+    /**
+     * Strips plan scaffolding a tiny model echoed instead of answering:
+     * <PLAN> blocks, numbered step lines ("1. Call Gmail"), standalone NONE
+     * lines and leftover tags. Returns the spoken remainder, may be empty.
+     */
+    private fun sanitizeFinalAnswer(answer: String): String {
+        var text = answer
+        val planBlock = Regex("(?s)<PLAN>.*?</PLAN>")
+        text = planBlock.replace(text, "")
+        text = text.replace("<PLAN>", "").replace("</PLAN>", "").replace("PLAN>", "")
+        text = text.replace(Regex("(?im)^\\s*harness\\s+(?:have\\s+|must\\s+|has\\s+)?to\\s+use\\s+\\S+\\s*$"), "")
+        text = text.replace(Regex("(?im)^\\s*\\d+\\.\\s.*$"), "")
+        text = text.replace(Regex("(?im)^\\s*NONE\\s*$"), "")
+        text = text.replace(Regex("(?im)^\\s*(plan|steps?)\\s*:?\\s*$"), "")
+        return text.replace(Regex("\\s+\\n"), "\n").trim()
+    }
+
     private fun getToolSchema(toolName: String, toolsArray: JSONArray): String {
         for (i in 0 until toolsArray.length()) {
             val tool = toolsArray.getJSONObject(i)
@@ -512,25 +664,38 @@ Do NOT output any other text or explanation.
 
     /** Legacy text compression path (ACH/single): summarize, wrap and elide. */
     private suspend fun compressTextPath(contextStr: String): String {
-        forensicLogger.logEvent("CONTEXT_COMPRESSION_START", "Context length ${contextStr.length}, strategy=$COMPRESSION_STRATEGY")
+        // Keep the most recent events inline: a small model's summary can be a few
+        // characters, which throws away the screen dump the agent still needs to act
+        // on. Only the middle of the history is compressed; the tail stays verbatim.
+        val keepRecent = RECENT_EVENTS_KEPT
+        if (sessionLog.size <= keepRecent + 1) {
+            forensicLogger.logEvent("CONTEXT_COMPRESSION_SKIP", "History too short to compress safely (${sessionLog.size} events); keeping it verbatim")
+            return contextStr
+        }
+        val originalRequest = sessionLog.firstOrNull { it.role == "user" }
+        val recentEvents = sessionLog.takeLast(keepRecent)
+        val middleEvents = sessionLog.subList(1, sessionLog.size - keepRecent)
+
+        forensicLogger.logEvent("CONTEXT_COMPRESSION_START", "Context length ${contextStr.length}, strategy=$COMPRESSION_STRATEGY, middle=${middleEvents.size} events")
         val startMs = System.currentTimeMillis()
         val compressed = try {
-            performCompression(contextStr)
+            performCompression(buildContextString(middleEvents))
         } catch (e: Exception) {
             forensicLogger.logEvent("CONTEXT_COMPRESSION_ERROR", "Compression failed: ${e.message}")
             contextStr
         }
         val elapsed = System.currentTimeMillis() - startMs
         forensicLogger.logEvent("CONTEXT_COMPRESSION_RESULT", "Compressed length ${compressed.length}, elapsed_ms=$elapsed")
-        // Elide the history: keep the original user request, replace everything else
-        // with the summary. Without elision the summaries accumulate and every turn
-        // re-compresses an ever-growing log.
-        val originalRequest = sessionLog.firstOrNull { it.role == "user" }
-        sessionLog = mutableListOf()
-        originalRequest?.let { sessionLog.add(it) }
-        sessionLog.add(SessionEvent("system", "CompressedConversationSummary: $compressed"))
+        // Elide the compressed middle: keep the original user request, the summary,
+        // and the verbatim recent tail. Without elision the summaries accumulate and
+        // every turn re-compresses an ever-growing log.
+        val newLog = mutableListOf<SessionEvent>()
+        originalRequest?.let { newLog.add(it) }
+        newLog.add(SessionEvent("system", "CompressedConversationSummary: $compressed"))
+        newLog.addAll(recentEvents)
+        sessionLog = newLog
         sessionPersistence.flushLog(sessionLog)
-        return "<COMPRESSED_HISTORY>\n$compressed\n</COMPRESSED_HISTORY>"
+        return buildContextString(newLog)
     }
 
     private fun buildContextString(log: List<SessionEvent>): String {

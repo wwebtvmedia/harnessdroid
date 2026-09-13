@@ -496,7 +496,16 @@ open class ToolRegistry(
                     .put("error", "Screen reader not enabled. I opened Settings > Accessibility: enable 'Harness Droid Screen Reader', then retry read_screen.")
                     .toString()
             }
-            return@withContext JSONObject().put("screen", com.ai.harnessdroid.core.ScreenReaderService.readScreen()).toString()
+            return@withContext JSONObject()
+                .put("screen", com.ai.harnessdroid.core.ScreenReaderService.readScreen())
+                // Small models re-read the same screen forever: tell them the next step.
+                .put(
+                    "hint",
+                    "This dump is current. To open an item, call tap_element with part of its content " +
+                        "(e.g. the sender name or subject of the first email row, not a folder name). " +
+                        "If this is already enough to answer the user, reply NONE."
+                )
+                .toString()
         }
 
         if (toolName == "tap_screen") {
@@ -637,7 +646,12 @@ open class ToolRegistry(
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context?.startActivity(launchIntent)
-                return@withContext JSONObject().put("result", "Successfully launched $pkgName").toString()
+                return@withContext JSONObject()
+                    .put("result", "Successfully launched $pkgName")
+                    // Small models stop after launching: nudge the next FSM step so the
+                    // task (e.g. reading a mail) actually continues.
+                    .put("hint", "The app is now open. To see its content, call read_screen next.")
+                    .toString()
             } else {
                 return@withContext JSONObject().put("error", "Could not launch $pkgName. Intent not found.").toString()
             }
@@ -772,6 +786,10 @@ open class ToolRegistry(
             else -> emptyList()
         }
     }
+
+    /** App labels known to the launch routing table (populated by discoverAndBindTools). */
+    fun knownAppLabels(): List<String> =
+        toolRoutingTable.keys.filter { it.startsWith("app_pkg_") }.map { it.removePrefix("app_pkg_") }
 
     private fun discoverCompatibleIntentApps(capabilityHints: List<String>): List<String> {
         val pm = context?.packageManager ?: return emptyList()
