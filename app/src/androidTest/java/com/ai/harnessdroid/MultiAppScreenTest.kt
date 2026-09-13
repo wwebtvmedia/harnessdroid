@@ -61,12 +61,17 @@ class MultiAppScreenTest {
         )
     }
 
-    private suspend fun launchAndRead(registry: ToolRegistry, appName: String, expectedPkg: String): String {
+    private suspend fun launchAndRead(registry: ToolRegistry, appName: String, vararg expectedPkgs: String): String {
         awaitScreenReader()
         // Peers the app-label routing table: without it launch_app can't resolve names.
         registry.discoverAndBindTools()
         val launched = registry.executeTool("launch_app", JSONObject().put("app_name", appName).toString())
-        assertTrue("launch_app($appName) failed: $launched", launched.contains("Successfully launched $expectedPkg"))
+        // Samsung devices ship their own Contacts/Clock/etc., so any of the
+        // expected packages proves the launch worked.
+        assertTrue(
+            "launch_app($appName) failed: $launched",
+            expectedPkgs.any { launched.contains("Successfully launched $it") }
+        )
         // Give the app a moment to render its first frame before reading the screen.
         Thread.sleep(2500)
         val read = registry.executeTool("read_screen", "{}")
@@ -115,12 +120,12 @@ class MultiAppScreenTest {
 
     @Test
     fun contactsScreenIsReadable() = runBlocking<Unit> {
-        launchAndRead(makeRegistry(), "Contacts", "com.google.android.contacts")
+        launchAndRead(makeRegistry(), "Contacts", "com.google.android.contacts", "com.samsung.android.app.contacts")
     }
 
     @Test
     fun clockScreenIsReadable() = runBlocking<Unit> {
-        launchAndRead(makeRegistry(), "Clock", "com.google.android.deskclock")
+        launchAndRead(makeRegistry(), "Clock", "com.google.android.deskclock", "com.sec.android.app.clockpackage")
     }
 
     // ---- Screen service plumbing ----
