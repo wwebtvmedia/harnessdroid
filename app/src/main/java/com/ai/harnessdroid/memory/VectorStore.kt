@@ -205,6 +205,23 @@ class VectorStore(
         removed
     } }
 
+    /**
+     * Drops EVERY entry — history chunks and durable "memory" facts — and
+     * persists. Used by Purge & Stop, which must leave no residue of any kind.
+     * The dedupe index is cleared too, or post-purge re-ingestion of the same
+     * text would be silently skipped.
+     */
+    suspend fun purgeAll(): Int = withContext(Dispatchers.IO) { mutex.withLock {
+        val removed = synchronized(entries) {
+            entries.size.also {
+                entries.clear()
+                textShaIndex.clear()
+            }
+        }
+        if (removed > 0) flushLocked()
+        removed
+    } }
+
     private fun flushLocked() {
         try {
             val snapshot = synchronized(entries) { ArrayList(entries) }

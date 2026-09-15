@@ -221,7 +221,7 @@ open class ToolRegistry(
         val tapScreenTool = """
             {
                 "name": "tap_screen",
-                "description": "Tap the screen at the given coordinates. Use the [left,top][right,bottom] bounds from read_screen to pick the center of the element to tap (e.g. tap the first email in the inbox to open it).",
+                "description": "Tap the screen at absolute x,y coordinates. Prefer tap_element with the visible label instead — it is far more reliable.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -639,15 +639,31 @@ open class ToolRegistry(
                     .put("error", "Screen reader not enabled. I opened Settings > Accessibility: enable 'Harness Droid Screen Reader', then retry read_screen.")
                     .toString()
             }
+            val screen = com.ai.harnessdroid.core.ScreenReaderService.readScreen()
+            // Small models re-read the same screen forever: tell them the next step.
+            // When no mail content is on screen (home/app drawer/another app), point
+            // them at launch_app first, or they loop on read_screen uselessly.
+            val looksLikeMail = Regex("(?i)inbox|mail").containsMatchIn(screen)
+            val hint = if (looksLikeMail) {
+                "This dump is current. To open an item, call tap_element with part of its content " +
+                    "(e.g. the sender name or subject of the first email row, not a folder name). " +
+                    "If this is already enough to answer the user, reply NONE."
+            } else {
+                "No email content is visible on this screen (home screen, app drawer or another app). " +
+                    "Call launch_app with {\"app_name\": \"Gmail\"}, then call read_screen again to see the inbox."
+            }
+            // Strip the [left,top][right,bottom] bounds and duplicate rows: raw a11y
+            // coordinates read as noise and bury the instruction for a 0.5B model
+            // (it starts echoing fragments like "6][109" instead of picking a tool).
+            // tap_element matches by visible text, so no coordinates are needed here.
+            val cleanScreen = screen.lines()
+                .map { it.replace(Regex("\\s*\\[\\d+,\\d+\\]\\[\\d+,\\d+\\]\\s*$"), "").trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+                .joinToString("\n")
             return@withContext JSONObject()
-                .put("screen", com.ai.harnessdroid.core.ScreenReaderService.readScreen())
-                // Small models re-read the same screen forever: tell them the next step.
-                .put(
-                    "hint",
-                    "This dump is current. To open an item, call tap_element with part of its content " +
-                        "(e.g. the sender name or subject of the first email row, not a folder name). " +
-                        "If this is already enough to answer the user, reply NONE."
-                )
+                .put("screen", cleanScreen)
+                .put("hint", hint)
                 .toString()
         }
 
@@ -656,7 +672,7 @@ open class ToolRegistry(
             val x = args.optInt("x", Int.MIN_VALUE)
             val y = args.optInt("y", Int.MIN_VALUE)
             if (x == Int.MIN_VALUE || y == Int.MIN_VALUE) {
-                return@withContext JSONObject().put("error", "tap_screen requires integer x and y (use read_screen bounds).").toString()
+                return@withContext JSONObject().put("error", "tap_screen requires integer x and y (prefer tap_element with the visible label instead).").toString()
             }
             if (!com.ai.harnessdroid.core.ScreenReaderService.isReady()) {
                 return@withContext JSONObject().put("error", "Screen reader not enabled; cannot tap. Enable it in Settings > Accessibility.").toString()

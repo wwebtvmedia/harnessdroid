@@ -73,6 +73,11 @@ class ClarificationStore(storageDirectory: File) {
         storageFile.writeText(JSONArray(records.map { it.toJson() }).toString(2), Charsets.UTF_8)
     }
 
+    /** Wipes every stored clarification record (Purge & Stop). */
+    fun clear() {
+        storageFile.writeText(JSONArray().toString(2), Charsets.UTF_8)
+    }
+
     fun findLatestByPrompt(prompt: String): ClarificationRecord? {
         return loadAll().filter { it.prompt == prompt }.maxByOrNull { it.createdAt }
     }

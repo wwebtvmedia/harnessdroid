@@ -106,4 +106,20 @@ open class SessionPersistence(private val context: Context?, private val session
         }
         return@withContext loadedLog
     }
+
+    companion object {
+        /** Name prefix of the per-delegation transcripts (HarnessService.runSubAgent). */
+        const val SUBTASK_PREFIX = "subtask_"
+
+        /**
+         * Deletes every sub-task transcript in [sessionsDir]; returns how many were
+         * removed. Only `subtask_*` names are matched, so the active session file
+         * can never be hit and a concurrent flush of the main session is undisturbed.
+         */
+        fun deleteSubtaskSessions(sessionsDir: File?): Int {
+            if (sessionsDir?.isDirectory != true) return 0
+            return sessionsDir.listFiles()
+                ?.count { it.isFile && it.name.startsWith(SUBTASK_PREFIX) && it.delete() } ?: 0
+        }
+    }
 }

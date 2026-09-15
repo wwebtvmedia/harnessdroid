@@ -130,7 +130,10 @@ fun HarnessScreen(harnessService: HarnessService?) {
     
     val chatLog = harnessService?.uiState?.collectAsState(initial = emptyList())?.value ?: emptyList()
     val forensicLog = harnessService?.forensicState?.collectAsState(initial = emptyList())?.value ?: emptyList()
-    
+    val taskRunning = harnessService?.taskRunningState?.collectAsState(initial = false)?.value ?: false
+    val purgeEpoch = harnessService?.purgeEpoch?.collectAsState(initial = 0)?.value ?: 0
+    var showPurgeConfirm by remember { mutableStateOf(false) }
+
     var activePermissionRequest by remember { mutableStateOf<com.ai.harnessdroid.core.PermissionRequest?>(null) }
     var activeClarificationRequest by remember { mutableStateOf<com.ai.harnessdroid.core.ClarificationRequest?>(null) }
     var clarificationInput by remember { mutableStateOf("") }
@@ -148,6 +151,27 @@ fun HarnessScreen(harnessService: HarnessService?) {
                 clarificationInput = req.defaultAnswer ?: ""
             }
         }
+    }
+
+    // After a Purge & Stop, drop permission/clarification dialogs whose
+    // deferred was just completed-and-cleared by the purge.
+    LaunchedEffect(purgeEpoch) {
+        if (purgeEpoch > 0) {
+            activePermissionRequest = null
+            activeClarificationRequest = null
+            clarificationInput = ""
+        }
+    }
+
+    if (showPurgeConfirm) {
+        PurgeConfirmDialog(
+            running = taskRunning,
+            onConfirm = {
+                showPurgeConfirm = false
+                harnessService?.purgeAndStopAll()
+            },
+            onDismiss = { showPurgeConfirm = false }
+        )
     }
 
     activePermissionRequest?.let { req ->
@@ -219,6 +243,13 @@ fun HarnessScreen(harnessService: HarnessService?) {
                     }
                     Button(onClick = { harnessService?.clearLog() }, modifier = Modifier.padding(end = 4.dp)) {
                         Text("Clear")
+                    }
+                    Button(
+                        onClick = { showPurgeConfirm = true },
+                        modifier = Modifier.padding(end = 4.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                    ) {
+                        Text("Purge & Stop")
                     }
                     Button(onClick = { showDebugMenu = true }, modifier = Modifier.padding(end = 4.dp)) {
                         Text("System Log")
@@ -443,6 +474,31 @@ fun PermissionPopup(toolName: String, reason: String, onApprove: () -> Unit, onD
         },
         dismissButton = {
             OutlinedButton(onClick = onDeny) { Text("Deny") }
+        }
+    )
+}
+
+@Composable
+fun PurgeConfirmDialog(running: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Purge & Stop") },
+        text = {
+            Text(
+                (if (running) "Stop the running task and " else "") +
+                    "erase the transcript, all memory vectors (including saved facts), " +
+                    "sub-task sessions, clarifications and approved permissions?\n\n" +
+                    "The System Log is kept."
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+            ) { Text("Purge") }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }

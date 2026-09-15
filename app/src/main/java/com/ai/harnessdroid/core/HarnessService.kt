@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.IBinder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,6 +51,24 @@ class HarnessService : Service(), HumanInteractionHandler {
     // Only one agent task may run at a time: concurrent tasks would corrupt the shared
     // session log and tool registry state.
     private val taskRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    // The running task's Job, kept so Purge & Stop can cancel it. AtomicReference:
+    // startTask runs on the (binder) main thread, the purge runs on Dispatchers.IO.
+    private val taskJob = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Job?>(null)
+    // Guards against two overlapping purges.
+    private val purging = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    // Mirrors `taskRunning` for the UI (the AtomicBoolean stays the CAS gate).
+    private val _taskRunning = MutableStateFlow(false)
+    val taskRunningState: StateFlow<Boolean> = _taskRunning.asStateFlow()
+
+    // Bumped after every purge so the UI can drop stale permission/clarification dialogs.
+    private val _purgeEpoch = MutableStateFlow(0)
+    val purgeEpoch: StateFlow<Int> = _purgeEpoch.asStateFlow()
+
+    private companion object {
+        const val STOP_JOIN_TIMEOUT_MS = 8_000L
+    }
 
     // Kept as a field so the clarification fallback can consult the LLM when the
     // human does not answer in time.
@@ -144,8 +163,9 @@ class HarnessService : Service(), HumanInteractionHandler {
         memoryService: com.ai.harnessdroid.memory.MemoryService?
     ): String {
         forensicLogger.logEvent("DELEGATE_START", "agent_type=$agentType task=$task")
+        var subRegistry: com.ai.harnessdroid.tools.ToolRegistry? = null
         return try {
-            val subRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager, allowDelegation = false)
+            subRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager, allowDelegation = false)
             val subSession = SessionPersistence(this, "subtask_${System.currentTimeMillis()}")
             subSession.initializeLog()
             val subLoop = AgentLoop(llmClient, subRegistry, subSession, forensicLogger, vectorStore, memoryService)
@@ -155,11 +175,17 @@ class HarnessService : Service(), HumanInteractionHandler {
                 .put("result", answer)
                 .put("subagent", agentType)
                 .toString()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // A purged/stopped task must unwind as a cancellation, not report an error.
+            throw e
         } catch (e: Exception) {
             forensicLogger.logEvent("DELEGATE_ERROR", "agent_type=$agentType failed: ${e.message}")
             org.json.JSONObject()
                 .put("error", "Sub-agent '$agentType' failed: ${e.message}. Handle the task yourself with the tools above.")
                 .toString()
+        } finally {
+            // Release the sub-agent's own provider bindings; nothing else does it.
+            subRegistry?.unbindAll()
         }
     }
 
@@ -168,12 +194,20 @@ class HarnessService : Service(), HumanInteractionHandler {
     }
 
     fun startTask(request: String) {
+        if (purging.get()) {
+            forensicLogger.logEvent("TASK_REJECTED", "Purge & Stop in progress; request ignored: $request")
+            return
+        }
         if (!taskRunning.compareAndSet(false, true)) {
             forensicLogger.logEvent("TASK_REJECTED", "A task is already running; new request ignored: $request")
             return
         }
+        _taskRunning.value = true
         forensicLogger.logEvent("TASK_START", "Received user request: $request")
-        scope.launch {
+        // LAZY + register + start: a purge arriving between launch() and the field
+        // write would otherwise cancel a job the field never saw.
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            val thisJob = coroutineContext[Job]
             try {
                 // The transcript and history vectors persist across requests
                 // so follow-up questions keep their context; the user clears
@@ -186,12 +220,98 @@ class HarnessService : Service(), HumanInteractionHandler {
 
                 val result = agentLoop.runTask(request)
                 forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Stop/Purge must look like a cancellation, not a task failure —
+                // rethrow so the coroutine ends as cancelled.
+                forensicLogger.logEvent("TASK_STOPPED", "Task cancelled: $request")
+                throw e
             } catch (e: Exception) {
                 // An uncaught failure here (e.g. SecurityException when no LLM provider
                 // is installed) would crash the whole process instead of failing the task.
                 forensicLogger.logEvent("TASK_ERROR", "Task failed: ${e.message}")
             } finally {
+                // NON-SUSPENDING ONLY: this block runs while unwinding a cancelled
+                // coroutine; any suspend call here would need withContext(NonCancellable).
+                // Resetting the flag here is what lets a new task start after a Stop.
                 taskRunning.set(false)
+                _taskRunning.value = false
+                taskJob.compareAndSet(thisJob, null)
+            }
+        }
+        taskJob.set(job)
+        job.start()
+    }
+
+    /**
+     * Purge & Stop: cancels the running task, releases every tool-provider binder
+     * and wipes all persisted or in-memory agent state. The forensic log is the ONE
+     * thing never touched here (ForensicLogger has no purge API on purpose), and the
+     * LLM configuration (SharedPreferences llm_config) is left intact.
+     */
+    fun purgeAndStopAll() {
+        if (!purging.compareAndSet(false, true)) {
+            forensicLogger.logEvent("PURGE_SKIPPED", "A purge is already running")
+            return
+        }
+        scope.launch {
+            try {
+                forensicLogger.logEvent("PURGE_START", "stop + full purge requested")
+
+                // 1. Stop the task first: nothing may keep writing while we delete.
+                val job = taskJob.getAndSet(null)
+                if (job != null) {
+                    job.cancel()
+                    // The LLM HTTP call is a blocking HttpURLConnection, so
+                    // cancellation can only land once it returns; never wait for
+                    // that longer than this. A draining task cannot write state
+                    // afterwards: every write path is a cancellable suspend entry,
+                    // and AgentLoop re-checks ensureActive() before running tools.
+                    val joined = kotlinx.coroutines.withTimeoutOrNull(STOP_JOIN_TIMEOUT_MS) { job.join() }
+                    if (joined == null) {
+                        forensicLogger.logEvent("TASK_STOP_TIMEOUT", "task still draining an LLM call after ${STOP_JOIN_TIMEOUT_MS}ms")
+                    }
+                }
+                taskRunning.set(false)
+                _taskRunning.value = false
+
+                // 2. Release tool-provider bindings.
+                toolRegistry.unbindAll()
+
+                // 3. Transcript: in-memory flow + session_1.jsonl.gz (empties _uiState).
+                sessionPersistence.clearLog()
+
+                // 4. Sub-task session files (never deleted before this feature).
+                val subtasks = SessionPersistence.deleteSubtaskSessions(java.io.File(filesDir, "sessions"))
+
+                // 5. Vectors: history chunks AND durable kind="memory" facts.
+                val vectors = vectorStore?.purgeAll() ?: 0
+
+                // 6. Embedder ingest cursor + in-memory AgentLoop state.
+                agentLoop.resetContext()
+
+                // 7. Clarification records on disk.
+                clarificationStore.clear()
+
+                // 8. Approved (tool, package) permissions.
+                val approvals = interactionManager.resetApprovedTools()
+
+                // 9. Orphaned deferreds: complete BEFORE clearing so a still-draining
+                //    task resumes (denied / neutral) instead of awaiting a dead dialog.
+                val perms = permissionResponses.values.toList()
+                permissionResponses.clear()
+                perms.forEach { it.complete(false) }
+                val clars = clarificationResponses.values.toList()
+                clarificationResponses.clear()
+                clars.forEach { it.complete("") }
+
+                _purgeEpoch.value = _purgeEpoch.value + 1
+                forensicLogger.logEvent("FULL_PURGE", "subtask_files=$subtasks vectors=$vectors approved_permissions=$approvals")
+            } catch (e: Exception) {
+                forensicLogger.logEvent("PURGE_ERROR", "${e.javaClass.simpleName}: ${e.message}")
+            } finally {
+                taskRunning.set(false)
+                _taskRunning.value = false
+                purging.set(false)
             }
         }
     }

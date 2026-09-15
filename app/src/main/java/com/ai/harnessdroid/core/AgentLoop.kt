@@ -7,6 +7,7 @@ import com.ai.harnessdroid.memory.ContextEmbedder
 import com.ai.harnessdroid.memory.VectorStore
 import com.ai.harnessdroid.tools.ToolRegistry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -179,10 +180,16 @@ class AgentLoop(
         // Last tool actually executed: the bare-app-mention rescue advances step by
         // step (launch -> read -> tap) instead of repeating the same call forever.
         var lastExecutedTool: String? = null
+        // Set once the full-context tool-pick prompt has derailed twice in a turn:
+        // later turns then go straight to the focused prompt (see FSM_STATE_1).
+        var forceFocused = false
         var finalResult = ""
 
         while (turns < maxTurns) {
             turns++
+            // Stop/Purge support: unwind promptly at each turn boundary instead of
+            // only at the next LLM suspension point. Throws CancellationException.
+            coroutineContext.ensureActive()
             forensicLogger.logEvent("TURN_START", "Starting turn $turns")
             
             // FSM STATE 1: Intent & Tool Selection
@@ -302,13 +309,35 @@ Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
 """
 .trimIndent()
             
-            forensicLogger.logEvent("FSM_STATE_1", "Asking LLM to pick a tool.")
-            val rawToolChoice = generateWithContext(latentPrefix, memoryText + step1Prompt, "FSM_STATE_1").trim()
-            forensicLogger.logEvent("FSM_STATE_1_RESPONSE", "LLM replied: $rawToolChoice")
+            val toolNameList = (0 until filteredToolsArray.length())
+                .joinToString(", ") { filteredToolsArray.getJSONObject(it).optString("name") }
+
+            var rawToolChoice: String
+            var focusedHintTool: String? = null
+            if (forceFocused) {
+                // A previous turn derailed on the full prompt: a 0.5B model echoes
+                // history tags there ("SYSTEM_MSG", "6][109"). The focused prompt
+                // also answers in ~1 min where the full one takes 4-6, so keep
+                // using it for the rest of the task.
+                val (prompt, hintTool) = buildFocusedPrompt(taskInstruction, sessionLog, toolNameList)
+                focusedHintTool = hintTool
+                rawToolChoice = generateWithContext(latentPrefix, memoryText + prompt, "FSM_STATE_1_FOCUSED").trim()
+                forensicLogger.logEvent("FSM_STATE_1_FOCUSED", "LLM replied: $rawToolChoice")
+            } else {
+                forensicLogger.logEvent("FSM_STATE_1", "Asking LLM to pick a tool.")
+                rawToolChoice = generateWithContext(latentPrefix, memoryText + step1Prompt, "FSM_STATE_1").trim()
+                forensicLogger.logEvent("FSM_STATE_1_RESPONSE", "LLM replied: $rawToolChoice")
+            }
             var toolChoice = rawToolChoice
-            
+
             // Harness applies robust validation against the filtered tool set
             toolChoice = extractToolName(toolChoice, filteredToolsArray, appLaunchedSuccessfully, lastExecutedTool)
+            // The focused prompt hides the interactive tools but a derailed model
+            // can still name one: the hint's tool takes precedence instead.
+            if (focusedHintTool != null && toolChoice in INTERACTIVE_TOOLS) {
+                forensicLogger.logEvent("FSM_STATE_1_FOCUSED_OVERRIDE", "hint tool $focusedHintTool replaces $toolChoice")
+                toolChoice = focusedHintTool
+            }
 
             // The model tried to pick a tool but named none of the available ones (e.g.
             // "harness have to use gmail"), or derailed into unparseable text: one
@@ -328,11 +357,31 @@ Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
                 val retryRaw = generateWithContext(latentPrefix, memoryText + retryPrompt, "FSM_STATE_1_RETRY").trim()
                 forensicLogger.logEvent("FSM_STATE_1_RETRY", "LLM replied: $retryRaw")
                 toolChoice = extractToolName(retryRaw, filteredToolsArray, appLaunchedSuccessfully, lastExecutedTool)
+
+                if (toolChoice == "NONE") {
+                    // Both full-context attempts derailed into history noise: fall back
+                    // to the focused prompt and stick with it for the remaining turns.
+                    forceFocused = true
+                    val (focusedPrompt, hintTool) = buildFocusedPrompt(taskInstruction, sessionLog, toolNameList)
+                    val focusedRaw = generateWithContext(latentPrefix, memoryText + focusedPrompt, "FSM_STATE_1_FOCUSED").trim()
+                    forensicLogger.logEvent("FSM_STATE_1_FOCUSED", "LLM replied: $focusedRaw")
+                    toolChoice = extractToolName(focusedRaw, filteredToolsArray, appLaunchedSuccessfully, lastExecutedTool)
+                    if (hintTool != null && toolChoice in INTERACTIVE_TOOLS) {
+                        forensicLogger.logEvent("FSM_STATE_1_FOCUSED_OVERRIDE", "hint tool $hintTool replaces $toolChoice")
+                        toolChoice = hintTool
+                    }
+                }
             }
             
             if (toolChoice == "NONE") {
                 // FSM STATE 1b: Final Answer Generation
-                val step1bPrompt = """
+                val step1bPrompt = if (forceFocused) {
+                    // Same medicine as FSM_STATE_1: the full transcript derails a
+                    // 0.5B model into echoing tags ("The final answer is NONE.");
+                    // the focused variant answers from the last tool result alone.
+                    buildFocusedAnswerPrompt(taskInstruction, sessionLog)
+                } else {
+                    """
 <SYSTEM>
 You are an AI Agent running on an Android device ($osInfo).
 You have access to the following tools via the harness:
@@ -356,13 +405,15 @@ Provide the final answer to the user based on the conversation and tool results 
 <OUTPUT>
 """
 .trimIndent()
-                
+                }
+
                 forensicLogger.logEvent("FSM_STATE_1B", "Asking LLM for final answer.")
                 finalResult = generateWithContext(latentPrefix, memoryText + step1bPrompt, "FSM_STATE_1B").trim()
                 // Tiny models often ignore the "no plan" rule and echo a <PLAN> block
                 // (or numbered steps) instead of answering. Strip that scaffolding;
                 // if nothing spoken remains, one corrective retry.
                 finalResult = sanitizeFinalAnswer(finalResult)
+                if (finalResult.isNoneEcho()) finalResult = ""
                 // A "final answer" that still names internal tools is a plan echo
                 // the sanitizer could not fully strip: force the corrective retry.
                 val echoesTools = (0 until toolsArray.length()).any {
@@ -370,13 +421,14 @@ Provide the final answer to the user based on the conversation and tool results 
                 }
                 if (finalResult.isBlank() || echoesTools) {
                     val retry1bPrompt = step1bPrompt +
-                        "\nYour previous reply was a plan, not an answer. Reply ONLY with the " +
+                        "\nYour previous reply was not an answer. Reply ONLY with the " +
                         "final answer to the user in 1-2 plain English sentences, using the facts " +
                         "in the conversation history (names, senders, subjects). " +
-                        "No plan, no steps, no tool names."
-                    val retry1b = sanitizeFinalAnswer(
+                        "No plan, no steps, no tool names, never the word NONE."
+                    var retry1b = sanitizeFinalAnswer(
                         generateWithContext(latentPrefix, memoryText + retry1bPrompt, "FSM_STATE_1B_RETRY").trim()
                     )
+                    if (retry1b.isNoneEcho()) retry1b = ""
                     if (retry1b.isNotBlank()) {
                         finalResult = retry1b
                         forensicLogger.logEvent("FSM_STATE_1B_RETRY", "recovered final answer after plan echo")
@@ -416,6 +468,9 @@ Do NOT output any other text or explanation.
             sessionPersistence.flushLog(sessionLog)
             
             // FSM STATE 3: Tool Execution (Harness)
+            // Last guard: a cancelled task must not fire another side-effectful
+            // tool call even while its final LLM HTTP call is still draining.
+            coroutineContext.ensureActive()
             val toolResultJson = toolRegistry.executeTool(toolChoice, arguments)
             lastExecutedTool = toolChoice
             if (toolChoice == "launch_app" && toolResultJson.contains("Successfully launched")) {
@@ -490,6 +545,84 @@ Do NOT output any other text or explanation.
             "tap_element" -> if (has("read_screen")) "read_screen" else "NONE"
             else -> if (has("read_screen")) "read_screen" else "launch_app"
         }
+    }
+
+    companion object {
+        /**
+         * Tools that pause for a human reply. A tiny model repeatedly gravitates
+         * to ask_human_for_input when it is offered in the focused prompt and
+         * the task stalls until the turn budget runs out, so the focused prompt
+         * hides them: autonomous screen exploration never needs them.
+         */
+        private val INTERACTIVE_TOOLS = setOf("ask_human_for_input", "request_permission")
+    }
+
+    /**
+     * Minimal tool-pick prompt for tiny models that derail on the full
+     * transcript: the task, the last useful tool result, and the tool list.
+     * If that result carries a "hint" naming a tool (read_screen/launch_app
+     * hints do), the prompt says to pick exactly that tool.
+     *
+     * @return the prompt plus the tool named by the hint (or null), so the
+     * caller can override an interactive/derailed choice with it.
+     */
+    private fun buildFocusedPrompt(
+        taskInstruction: String,
+        sessionLog: List<SessionEvent>,
+        toolNameList: String
+    ): Pair<String, String?> {
+        val lastToolResult = sessionLog.lastOrNull { it.role == "tool" && it.content.isNotBlank() }
+            ?.content?.take(1200).orEmpty()
+        val hintTool = Regex("(?i)call (\\w+)").find(lastToolResult)?.groupValues?.get(1)
+        val exploratory = toolNameList.split(", ")
+            .filter { it.isNotBlank() && it !in INTERACTIVE_TOOLS }
+            .joinToString(", ")
+        val hintLine = if (hintTool != null && exploratory.split(", ").contains(hintTool)) {
+            "\nThe hint names the tool to use: $hintTool. Choose exactly that tool."
+        } else ""
+        val prompt = """
+<SYSTEM>
+You are an Android agent. Task: $taskInstruction
+Last tool result:
+$lastToolResult
+
+Choose the NEXT tool from: $exploratory
+If the last tool result contains a 'hint' field, follow that hint when choosing.$hintLine
+Reply with ONE final line, exactly: harness have to use <tool_name>
+If the task is already answerable from the last tool result, reply: NONE
+</SYSTEM>
+""".trimIndent()
+        return Pair(prompt, hintTool)
+    }
+
+    /**
+     * True when the "final answer" is just the model echoing its tool-choice
+     * signal ("NONE", "The final answer is NONE.") instead of speaking.
+     */
+    private fun String.isNoneEcho(): Boolean {
+        val letters = lowercase().replace(Regex("[^a-z]"), "")
+        return letters == "none" || letters.endsWith("isnone") || letters == "answernone"
+    }
+
+    /**
+     * Final-answer prompt for derailed sessions: the task and the last useful
+     * tool result only, asking for plain sentences.
+     */
+    private fun buildFocusedAnswerPrompt(
+        taskInstruction: String,
+        sessionLog: List<SessionEvent>
+    ): String {
+        val lastToolResult = sessionLog.lastOrNull { it.role == "tool" && it.content.isNotBlank() }
+            ?.content?.take(1500).orEmpty()
+        return """
+<SYSTEM>
+You are an Android agent. Task: $taskInstruction
+Last tool result:
+$lastToolResult
+
+Reply with the final answer to the user: 1-3 plain English sentences using the facts above (names, senders, subjects). Never output the word NONE.
+</SYSTEM>
+""".trimIndent()
     }
 
     private fun extractToolName(

@@ -29,15 +29,19 @@ class InteractionManager(private val handler: HumanInteractionHandler) {
      */
     suspend fun requireIntentPermission(toolName: String, intentPackage: String, arguments: String): Boolean {
         val key = "$toolName:$intentPackage"
-        if (allowedTools.contains(key)) {
-            return true
+        synchronized(allowedTools) {
+            if (allowedTools.contains(key)) {
+                return true
+            }
         }
 
         val reason = "The agent wants to execute '$toolName' in app '$intentPackage'. This intent is not yet allowed."
         val approved = handler.askForPermission(toolName, intentPackage, reason)
 
         if (approved) {
-            allowedTools.add(key)
+            synchronized(allowedTools) {
+                allowedTools.add(key)
+            }
         }
         return approved
     }
@@ -47,5 +51,13 @@ class InteractionManager(private val handler: HumanInteractionHandler) {
      */
     suspend fun requestHumanInput(prompt: String, defaultAnswer: String? = null, timeoutSeconds: Long = 120): String {
         return handler.askUserForInput(prompt, defaultAnswer, timeoutSeconds)
+    }
+
+    /**
+     * Drops every approved (tool, package) pair so the human re-approves after a
+     * purge. Returns how many approvals were cleared (for the forensic trail).
+     */
+    fun resetApprovedTools(): Int = synchronized(allowedTools) {
+        allowedTools.size.also { allowedTools.clear() }
     }
 }
