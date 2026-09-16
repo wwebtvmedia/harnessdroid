@@ -1,7 +1,9 @@
 package com.ai.harnessdroid.core
 
+import android.content.Context
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
+import android.content.SharedPreferences
 
 /**
  * Replicates the 'interaction/' package from DeepSeek Harness.
@@ -15,11 +17,13 @@ interface HumanInteractionHandler {
     suspend fun askUserForInput(prompt: String, defaultAnswer: String? = null, timeoutSeconds: Long = 120): String
 }
 
-class InteractionManager(private val handler: HumanInteractionHandler) {
+class InteractionManager(private val context: Context, private val handler: HumanInteractionHandler) {
 
-    // Whitelist of already approved (tool, target package) pairs so the user isn't pestered
+    // Persistent whitelist of already approved (tool, target package) pairs so the user isn't pestered
     // repeatedly — while still being asked again before the agent touches a different app.
-    private val allowedTools = mutableSetOf<String>()
+    private val allowedToolsPrefs by lazy { 
+        context.getSharedPreferences("harness_permissions", Context.MODE_PRIVATE) 
+    }
 
     /**
      * Called before the ToolRegistry executes an Intent.
@@ -29,19 +33,15 @@ class InteractionManager(private val handler: HumanInteractionHandler) {
      */
     suspend fun requireIntentPermission(toolName: String, intentPackage: String, arguments: String): Boolean {
         val key = "$toolName:$intentPackage"
-        synchronized(allowedTools) {
-            if (allowedTools.contains(key)) {
-                return true
-            }
+        if (allowedToolsPrefs.getBoolean(key, false)) {
+            return true
         }
 
         val reason = "The agent wants to execute '$toolName' in app '$intentPackage'. This intent is not yet allowed."
         val approved = handler.askForPermission(toolName, intentPackage, reason)
 
         if (approved) {
-            synchronized(allowedTools) {
-                allowedTools.add(key)
-            }
+            allowedToolsPrefs.edit().putBoolean(key, true).apply()
         }
         return approved
     }
@@ -57,7 +57,9 @@ class InteractionManager(private val handler: HumanInteractionHandler) {
      * Drops every approved (tool, package) pair so the human re-approves after a
      * purge. Returns how many approvals were cleared (for the forensic trail).
      */
-    fun resetApprovedTools(): Int = synchronized(allowedTools) {
-        allowedTools.size.also { allowedTools.clear() }
+    fun resetApprovedTools(): Int {
+        val size = allowedToolsPrefs.all.size
+        allowedToolsPrefs.edit().clear().apply()
+        return size
     }
 }

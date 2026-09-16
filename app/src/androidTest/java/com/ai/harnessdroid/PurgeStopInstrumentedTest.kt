@@ -110,7 +110,8 @@ class PurgeStopInstrumentedTest {
             }
             override suspend fun askUserForInput(prompt: String, defaultAnswer: String?, timeoutSeconds: Long): String = ""
         }
-        val manager = com.ai.harnessdroid.core.InteractionManager(handler)
+        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = com.ai.harnessdroid.core.InteractionManager(context, handler)
 
         assertTrue(manager.requireIntentPermission("launch_app", "com.example.app", "{}"))
         assertEquals(1, calls)

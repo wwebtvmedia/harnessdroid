@@ -103,7 +103,7 @@ class HarnessService : Service(), HumanInteractionHandler {
         
         llmClient = com.ai.harnessdroid.llm.LLMClient(this)
         clarificationStore = ClarificationStore(filesDir)
-        val interactionManager = InteractionManager(this).also { this.interactionManager = it }
+        val interactionManager = InteractionManager(this, this).also { this.interactionManager = it }
         toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
         
         sessionPersistence = SessionPersistence(this, "session_1")
