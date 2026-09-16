@@ -18,8 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import com.ai.harnessdroid.core.SessionEvent
@@ -32,6 +36,9 @@ class MainActivity : ComponentActivity() {
     private var harnessServiceState = mutableStateOf<HarnessService?>(null)
     private var isBound = false
     private var pendingPrompt: String? = null
+
+    /** Text zoom factor (sp multiplier); survives restarts via UiZoom prefs. */
+    private var textScale = mutableStateOf(1f)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
@@ -54,6 +61,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        textScale.value = UiZoom.load(this)
 
         val incomingPrompt = intent?.getStringExtra("prompt") ?: intent?.getStringExtra(Intent.EXTRA_TEXT)
 
@@ -69,11 +77,35 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val density = LocalDensity.current
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF4CAF50), background = Color(0xFF121212), surface = Color(0xFF1E1E1E))) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    HarnessScreen(harnessServiceState.value)
+                // Scaling fontScale (not density) zooms every `sp` text in the
+                // whole screen — chat, input, buttons — while dp metrics and
+                // layout stay untouched. key(textScale) replaces the subtree
+                // when the zoom changes: skippable composables (chips, app bar
+                // buttons) would otherwise keep their stale captured density.
+                key(textScale.value) {
+                    CompositionLocalProvider(
+                        LocalDensity provides Density(density.density, density.fontScale * textScale.value)
+                    ) {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            HarnessScreen(
+                                harnessServiceState.value,
+                                onTextZoomChange = { factor -> changeTextZoom(factor) }
+                            )
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    /** Multiplies the current text scale by [factor], clamped and persisted. */
+    private fun changeTextZoom(factor: Float) {
+        val newScale = (textScale.value * factor).coerceIn(UiZoom.MIN, UiZoom.MAX)
+        if (newScale != textScale.value) {
+            textScale.value = newScale
+            UiZoom.save(this, newScale)
         }
     }
 
@@ -123,7 +155,10 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HarnessScreen(harnessService: HarnessService?) {
+fun HarnessScreen(
+    harnessService: HarnessService?,
+    onTextZoomChange: ((factor: Float) -> Unit)? = null
+) {
     var inputText by remember { mutableStateOf("") }
     var showPlanMenu by remember { mutableStateOf(false) }
     var showDebugMenu by remember { mutableStateOf(false) }
@@ -226,6 +261,20 @@ fun HarnessScreen(harnessService: HarnessService?) {
             TopAppBar(
                 title = { Text("Tree4Five Harness", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
                 actions = {
+                    // Text zoom controls: A- shrinks, A+ grows (persisted).
+                    IconButton(
+                        onClick = { onTextZoomChange?.invoke(1f / UiZoom.BUTTON_STEP) },
+                        modifier = Modifier.testTag("zoom_out")
+                    ) {
+                        Text("A-", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(
+                        onClick = { onTextZoomChange?.invoke(UiZoom.BUTTON_STEP) },
+                        modifier = Modifier.testTag("zoom_in")
+                    ) {
+                        Text("A+", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+
                     var showToolsDialog by remember { mutableStateOf(false) }
                     var toolsJson by remember { mutableStateOf("[]") }
                     val scope = rememberCoroutineScope()
@@ -352,7 +401,15 @@ fun HarnessScreen(harnessService: HarnessService?) {
             )
         }
     ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .padding(16.dp)
+                // Two-finger pinch anywhere in the screen zooms the text; the
+                // handler never consumes single-finger events, so the chat
+                // list still scrolls normally.
+                .textPinchZoom { factor -> onTextZoomChange?.invoke(factor) }
+        ) {
             val examples = listOf("Summarize emails", "Turn off lights", "Search deepseek harness")
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 examples.forEach { ex ->
@@ -373,14 +430,14 @@ fun HarnessScreen(harnessService: HarnessService?) {
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).testTag("request_input"),
                     placeholder = { Text("Enter request...") }
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Button(onClick = { 
+                Button(onClick = {
                     harnessService?.startTask(inputText)
                     inputText = ""
-                }, enabled = harnessService != null) {
+                }, enabled = harnessService != null, modifier = Modifier.testTag("run_button")) {
                     Text("Run")
                 }
             }
