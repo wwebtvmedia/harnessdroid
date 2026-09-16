@@ -111,6 +111,10 @@ class PurgeStopInstrumentedTest {
             override suspend fun askUserForInput(prompt: String, defaultAnswer: String?, timeoutSeconds: Long): String = ""
         }
         val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        // Approvals are persisted in harness_permissions since 4c7f705: clear them so this
+        // test starts from a known state and stays idempotent across runs on one device.
+        context.getSharedPreferences("harness_permissions", android.content.Context.MODE_PRIVATE)
+            .edit().clear().commit()
         val manager = com.ai.harnessdroid.core.InteractionManager(context, handler)
 
         assertTrue(manager.requireIntentPermission("launch_app", "com.example.app", "{}"))
