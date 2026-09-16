@@ -11,8 +11,10 @@ import com.tree4five.gguf.IEmbedCallback
 import com.tree4five.gguf.ILLMCallback
 import com.tree4five.gguf.ILLMService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -242,9 +244,11 @@ open class LLMClient(private val context: Context?) {
         connection.requestMethod = "POST"
         connection.setRequestProperty("Content-Type", "application/json")
         // Explicit timeouts: the JDK defaults are infinite, so a stalled provider
-        // would hang the AgentLoop forever.
+        // would hang the AgentLoop forever. 240s of read window lets mid-size
+        // "thinking" models finish; anything slower fails cleanly into the
+        // (also bounded) local fallback instead of stalling.
         connection.connectTimeout = 15_000
-        connection.readTimeout = 120_000
+        connection.readTimeout = 240_000
         if (settings.apiKey.isNotEmpty()) {
             connection.setRequestProperty("Authorization", "Bearer ${settings.apiKey}")
         }
@@ -284,28 +288,44 @@ open class LLMClient(private val context: Context?) {
         return "Error: Custom LLM API returned HTTP $responseCode"
     }
 
+    /** Bound on one local-provider generation: without it a wedged provider
+     *  (model still loading, OOM, dead service) hangs the fallback path — and
+     *  therefore the agent loop — forever. */
+    private val LOCAL_GENERATION_TIMEOUT_MS = 180_000L
+
     /** Generation through the local Tree4Five binder service. */
     internal open suspend fun generateViaLocal(prompt: String): String {
         val service = getService()
-        return suspendCancellableCoroutine { continuation ->
-            val callback = object : ILLMCallback.Stub() {
-                override fun onTokenReceived(token: String) {}
-                override fun onGenerationComplete(fullText: String) {
-                    if (continuation.isActive) {
-                        continuation.resume(fullText)
+        return try {
+            withTimeout(LOCAL_GENERATION_TIMEOUT_MS) {
+                suspendCancellableCoroutine { continuation ->
+                    val callback = object : ILLMCallback.Stub() {
+                        override fun onTokenReceived(token: String) {}
+                        override fun onGenerationComplete(fullText: String) {
+                            if (continuation.isActive) {
+                                continuation.resume(fullText)
+                            }
+                        }
+                    }
+                    try {
+                        service.generateTextStream(prompt, callback)
+                        continuation.invokeOnCancellation {
+                            // Keep the callback referenced so the provider's
+                            // binder thread never dereferences a collected peer.
+                        }
+                    } catch (e: Exception) {
+                        if (continuation.isActive) {
+                            continuation.resumeWithException(e)
+                        }
                     }
                 }
             }
-            try {
-                service.generateTextStream(prompt, callback)
-                continuation.invokeOnCancellation {
-                    val keepAlive = callback
-                }
-            } catch (e: Exception) {
-                if (continuation.isActive) {
-                    continuation.resumeWithException(e)
-                }
-            }
+        } catch (e: TimeoutCancellationException) {
+            // Re-throw as a plain failure: callers (generateWithSettings, tests)
+            // must treat it like any other provider error, not a coroutine teardown.
+            throw java.util.concurrent.TimeoutException(
+                "Local LLMProvider did not answer within ${LOCAL_GENERATION_TIMEOUT_MS / 1000}s"
+            )
         }
     }
 
