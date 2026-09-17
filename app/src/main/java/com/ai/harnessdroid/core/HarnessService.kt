@@ -203,7 +203,11 @@ class HarnessService : Service(), HumanInteractionHandler {
             return
         }
         _taskRunning.value = true
+        // Loop budget re-read per task: the Loop Settings dialog takes effect
+        // on the next Run without restarting the service.
+        val maxTurns = AgentLoopSettings.load(this)
         forensicLogger.logEvent("TASK_START", "Received user request: $request")
+        forensicLogger.logEvent("LOOP_BUDGET", "max_turns=$maxTurns")
         // LAZY + register + start: a purge arriving between launch() and the field
         // write would otherwise cancel a job the field never saw.
         val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
@@ -218,7 +222,7 @@ class HarnessService : Service(), HumanInteractionHandler {
                 history.add(SessionEvent("user", request))
                 sessionPersistence.flushLog(history)
 
-                val result = agentLoop.runTask(request)
+                val result = agentLoop.runTask(request, maxTurns = maxTurns)
                 forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Stop/Purge must look like a cancellation, not a task failure —

@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import com.ai.harnessdroid.core.AgentLoopSettings
 import com.ai.harnessdroid.core.SessionEvent
 import com.ai.harnessdroid.core.HarnessService
 import kotlinx.coroutines.launch
@@ -312,6 +313,7 @@ fun HarnessScreen(
                     var showHelpDialog by remember { mutableStateOf(false) }
                     var showLLMConfigDialog by remember { mutableStateOf(false) }
                     var showMemoryDialog by remember { mutableStateOf(false) }
+                    var showLoopSettingsDialog by remember { mutableStateOf(false) }
 
                     IconButton(onClick = { showMenu = true }) {
                         Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu")
@@ -349,6 +351,13 @@ fun HarnessScreen(
                                 showMemoryDialog = true
                             }
                         )
+                        DropdownMenuItem(
+                            text = { Text("Loop Settings") },
+                            onClick = {
+                                showMenu = false
+                                showLoopSettingsDialog = true
+                            }
+                        )
                     }
 
                     if (showVersionDialog) {
@@ -380,6 +389,13 @@ fun HarnessScreen(
                         MemoryDialog(
                             harnessService = harnessService,
                             onDismiss = { showMemoryDialog = false }
+                        )
+                    }
+
+                    if (showLoopSettingsDialog) {
+                        LoopSettingsDialog(
+                            context = androidx.compose.ui.platform.LocalContext.current,
+                            onDismiss = { showLoopSettingsDialog = false }
                         )
                     }
 
@@ -632,6 +648,56 @@ fun ToolsDialog(toolsJson: String, onDismiss: () -> Unit) {
         },
         confirmButton = {
             Button(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
+fun LoopSettingsDialog(
+    context: Context,
+    onDismiss: () -> Unit
+) {
+    var maxTurnsText by remember { mutableStateOf(AgentLoopSettings.load(context).toString()) }
+    val parsed = maxTurnsText.toIntOrNull()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Loop Settings") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Maximum number of agent loop turns per task " +
+                        "(${AgentLoopSettings.MIN}-${AgentLoopSettings.MAX}). " +
+                        "Complex tasks may need more turns; the default is ${AgentLoopSettings.DEFAULT}. " +
+                        "Applies from the next Run.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = maxTurnsText,
+                    // Digits only, kept short: the field can never hold a value
+                    // big enough to overflow an Int on parse.
+                    onValueChange = { maxTurnsText = it.filter(Char::isDigit).take(2) },
+                    label = { Text("Number of loops") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("loop_input")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    AgentLoopSettings.save(context, parsed ?: AgentLoopSettings.DEFAULT)
+                    onDismiss()
+                },
+                // Out-of-range values are clamped by save(); a blank field is not savable.
+                enabled = parsed != null
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
