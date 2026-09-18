@@ -981,7 +981,6 @@ open class ToolRegistry(
     // peers (whatsapp-bot memory, taught chunks…) and returns a firewall-verified
     // outcome. AIDL contract mirror-published in aidl/com/swarmknowledge/ospbridge.
 
-    private val OSP_PACKAGE = "com.swarmknowledge.ospbridge"
     private val OSP_ACTION = "com.swarmknowledge.ospbridge.ACTION_OSP_SERVICE"
     private val OSP_BIND_TIMEOUT_MS = 5_000L
     /** Remote peers end in an LLM generation: minutes, not the 15 s tool slot. */
@@ -991,12 +990,32 @@ open class ToolRegistry(
     private var ospService: IOspService? = null
     private var ospConnection: ServiceConnection? = null
 
+    /**
+     * Resolve the bridge's installed package from its intent action: the app's
+     * applicationId is store-renamed (com.tree4five.osp) while its code namespace
+     * stays com.swarmknowledge.ospbridge, so the package can never be hardcoded.
+     */
+    private fun ospResolvePackage(): String? {
+        val pm = context?.packageManager ?: return null
+        return try {
+            pm.queryIntentServices(Intent(OSP_ACTION), PackageManager.GET_META_DATA)
+                .firstOrNull()?.serviceInfo?.packageName
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** Bind the OSP Bridge foreground node; cached like boundServices. */
     private suspend fun ospBind(): IOspService = suspendCancellableCoroutine { cont ->
         ospService?.let {
             cont.resume(it)
             return@suspendCancellableCoroutine
         }
+        val pkg = ospResolvePackage()
+            ?: run {
+                cont.resumeWithException(SecurityException("OSP Bridge app not installed (action $OSP_ACTION)."))
+                return@suspendCancellableCoroutine
+            }
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, service: IBinder?) {
                 val svc = IOspService.Stub.asInterface(service)
@@ -1009,7 +1028,7 @@ open class ToolRegistry(
             }
         }
         ospConnection = connection
-        val intent = Intent(OSP_ACTION).apply { setPackage(OSP_PACKAGE) }
+        val intent = Intent(OSP_ACTION).apply { setPackage(pkg) }
         val bound = try {
             context?.bindService(intent, connection, Context.BIND_AUTO_CREATE)
         } catch (e: Exception) {
@@ -1017,7 +1036,7 @@ open class ToolRegistry(
             false
         }
         if (bound != true && cont.isActive) {
-            cont.resumeWithException(SecurityException("Could not bind to $OSP_PACKAGE (app missing or node stopped)."))
+            cont.resumeWithException(SecurityException("Could not bind to $pkg (app missing or node stopped)."))
         }
     }
 
