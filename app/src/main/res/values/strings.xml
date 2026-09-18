@@ -1,4 +1,100 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Accessibility service (ScreenReaderService) -->
+    <string name="screen_reader_label">Harness Droid Screen Reader</string>
     <string name="screen_reader_description">Lets the Harness Droid agent read the screen and interact with apps (e.g. read your Gmail inbox) on your behalf.</string>
+
+    <!-- App bar -->
+    <string name="app_title">Tree4Five Harness</string>
+    <string name="btn_list_tools">List Tools</string>
+    <string name="btn_clear">Clear</string>
+    <string name="btn_purge">Purge &amp; Stop</string>
+    <string name="btn_system_log">System Log</string>
+    <string name="btn_view_plan">View Plan</string>
+    <string name="cd_menu">Menu</string>
+    <string name="cd_zoom_out">Shrink text</string>
+    <string name="cd_zoom_in">Enlarge text</string>
+
+    <!-- Overflow menu -->
+    <string name="menu_help">Help</string>
+    <string name="menu_version">Version</string>
+    <string name="menu_llm_config">LLM Configuration</string>
+    <string name="menu_memory">Memory</string>
+    <string name="menu_loop_settings">Loop Settings</string>
+    <string name="menu_language">Language</string>
+    <string name="lang_system">System default</string>
+
+    <!-- Common buttons -->
+    <string name="btn_ok">OK</string>
+    <string name="btn_close">Close</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_run">Run</string>
+
+    <!-- Version dialog -->
+    <string name="version_body">Tree4Five Harness v%1$s</string>
+
+    <!-- Help dialog -->
+    <string name="help_body">Welcome to Tree4Five Harness.\n\nType a request in the input field to interact with the LLM agent. You can view logs, tools, and the agent\'s plan using the top bar buttons.</string>
+
+    <!-- Chat screen -->
+    <string name="request_input_hint">Enter request…</string>
+    <string-array name="examples">
+        <item>Summarize emails</item>
+        <item>Turn off lights</item>
+        <item>Search deepseek harness</item>
+    </string-array>
+
+    <!-- Plan / system log dialogs -->
+    <string name="plan_title">Agent Execution Plan</string>
+    <string name="system_log_title">System/Forensic Logs</string>
+
+    <!-- Tools dialog -->
+    <string name="tools_title">Available Tools</string>
+    <string name="tools_none">No tools found.</string>
+    <string name="tools_unknown_name">Unknown</string>
+    <string name="tools_no_description">No description</string>
+
+    <!-- Permission popup -->
+    <string name="permission_title">Permission Required</string>
+    <string name="permission_message">The agent wants to use the tool \'%1$s\'.\nReason: %2$s\nDo you allow this?</string>
+    <string name="btn_allow">Allow</string>
+    <string name="btn_deny">Deny</string>
+
+    <!-- Purge confirmation: two full sentences (never concatenate a prefix,
+         aapt2 strips trailing whitespace and word order differs per locale) -->
+    <string name="purge_confirm_body">Erase the transcript, all memory vectors (including saved facts), sub-task sessions, clarifications and approved permissions?\n\nThe System Log is kept.</string>
+    <string name="purge_confirm_body_running">Stop the running task and erase the transcript, all memory vectors (including saved facts), sub-task sessions, clarifications and approved permissions?\n\nThe System Log is kept.</string>
+    <string name="btn_purge_confirm">Purge</string>
+
+    <!-- Clarification popup -->
+    <string name="clarification_title">The agent has a question</string>
+    <string name="clarification_hint">Your answer…</string>
+    <string name="btn_submit">Submit</string>
+    <string name="btn_use_default">Use Default</string>
+    <string name="btn_ignore">Ignore</string>
+
+    <!-- Loop settings dialog -->
+    <string name="loop_description">Maximum number of agent loop turns per task (%1$d–%2$d). Complex tasks may need more turns; the default is %3$d. Applies from the next Run.</string>
+    <string name="loop_input_label">Number of loops</string>
+
+    <!-- LLM configuration dialog -->
+    <string name="llm_tree4five">Tree4Five LLMProvider (Default)</string>
+    <string name="llm_custom">Custom LLM</string>
+    <string name="llm_api_url">API URL</string>
+    <string name="llm_api_key">API Key</string>
+    <string name="llm_api_type">API Type (OpenAI-compatible)</string>
+    <string name="llm_model_name">Model name (e.g. gpt-4o-mini, deepseek-chat)</string>
+
+    <!-- Memory dialog -->
+    <string name="memory_description">Durable user facts, kept as embeddings and recalled before each task.</string>
+    <string name="memory_new_fact">New fact</string>
+    <string name="btn_remember">Remember</string>
+    <string name="memory_recall_query">Recall query</string>
+    <string name="btn_recall">Recall</string>
+    <string name="memory_status_stored">Fact stored.</string>
+    <string name="memory_status_store_failed">Could not store (no embeddings?).</string>
+    <string name="memory_status_recall_empty">Nothing recalled.</string>
+    <string name="memory_recalled">Recalled:</string>
+    <string name="memory_facts_count">Stored facts (%1$d):</string>
 </resources>

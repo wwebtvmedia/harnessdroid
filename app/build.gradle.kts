@@ -11,8 +11,8 @@ android {
         applicationId = "com.ai.harnessdroid"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.2.14"
+        versionCode = 23
+        versionName = "1.2.15"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -73,6 +73,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.2.0")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     // Compose UI tests (rotation/zoom): versions come from the compose-bom above.
     androidTestImplementation(platform("androidx.compose:compose-bom:2023.08.00"))

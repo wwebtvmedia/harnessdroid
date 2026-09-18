@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- خدمة إمكانية الوصول (ScreenReaderService) -->
+    <string name="screen_reader_label">قارئ شاشة Harness Droid</string>
+    <string name="screen_reader_description">يتيح لوكيل Harness Droid قراءة الشاشة والتفاعل مع التطبيقات (مثل قراءة بريد Gmail) نيابةً عنك.</string>
+
+    <!-- شريط التطبيق -->
+    <string name="btn_list_tools">عرض الأدوات</string>
+    <string name="btn_clear">مسح</string>
+    <string name="btn_purge">مسح شامل وإيقاف</string>
+    <string name="btn_system_log">سجل النظام</string>
+    <string name="btn_view_plan">عرض الخطة</string>
+    <string name="cd_menu">القائمة</string>
+    <string name="cd_zoom_out">تصغير النص</string>
+    <string name="cd_zoom_in">تكبير النص</string>
+
+    <!-- القائمة المنسدلة -->
+    <string name="menu_help">مساعدة</string>
+    <string name="menu_version">الإصدار</string>
+    <string name="menu_llm_config">إعدادات LLM</string>
+    <string name="menu_memory">الذاكرة</string>
+    <string name="menu_loop_settings">إعدادات الحلقة</string>
+    <string name="menu_language">اللغة</string>
+    <string name="lang_system">لغة النظام</string>
+
+    <!-- أزرار شائعة -->
+    <string name="btn_ok">موافق</string>
+    <string name="btn_close">إغلاق</string>
+    <string name="btn_cancel">إلغاء</string>
+    <string name="btn_save">حفظ</string>
+    <string name="btn_run">تشغيل</string>
+
+    <!-- حوار الإصدار -->
+    <string name="version_body">Tree4Five Harness v%1$s</string>
+
+    <!-- حوار المساعدة -->
+    <string name="help_body">مرحباً بك في Tree4Five Harness.\n\nاكتب طلباً في حقل الإدخال للتفاعل مع وكيل LLM. يمكنك عرض السجلات والأدوات وخطة الوكيل من أزرار الشريط العلوي.</string>
+
+    <!-- شاشة المحادثة -->
+    <string name="request_input_hint">أدخل طلباً…</string>
+    <string-array name="examples">
+        <item>لخّص رسائلي</item>
+        <item>أطفئ الأضواء</item>
+        <item>ابحث عن deepseek harness</item>
+    </string-array>
+
+    <!-- حوارا الخطة / سجل النظام -->
+    <string name="plan_title">خطة تنفيذ الوكيل</string>
+    <string name="system_log_title">سجلات النظام/الطب الشرعي</string>
+
+    <!-- حوار الأدوات -->
+    <string name="tools_title">الأدوات المتاحة</string>
+    <string name="tools_none">لا توجد أدوات.</string>
+    <string name="tools_unknown_name">غير معروف</string>
+    <string name="tools_no_description">بدون وصف</string>
+
+    <!-- نافذة الأذونات -->
+    <string name="permission_title">مطلوب إذن</string>
+    <string name="permission_message">يريد الوكيل استخدام الأداة «%1$s».\nالسبب: %2$s\nهل تسمح بذلك؟</string>
+    <string name="btn_allow">سماح</string>
+    <string name="btn_deny">رفض</string>
+
+    <!-- تأكيد المسح الشامل: جملتان كاملتان (بلا دمج بادئة) -->
+    <string name="purge_confirm_body">مسح سجل المحادثة وجميع متجهات الذاكرة (بما فيها الحقائق المحفوظة) وجلسات المهام الفرعية والاستيضاحات والأذونات المعتمدة؟\n\nيُحتفظ بسجل النظام.</string>
+    <string name="purge_confirm_body_running">إيقاف المهمة الجارية ومسح سجل المحادثة وجميع متجهات الذاكرة (بما فيها الحقائق المحفوظة) وجلسات المهام الفرعية والاستيضاحات والأذونات المعتمدة؟\n\nيُحتفظ بسجل النظام.</string>
+    <string name="btn_purge_confirm">مسح</string>
+
+    <!-- نافذة الاستيضاح -->
+    <string name="clarification_title">للوكيل سؤال</string>
+    <string name="clarification_hint">إجابتك…</string>
+    <string name="btn_submit">إرسال</string>
+    <string name="btn_use_default">استخدام الافتراضي</string>
+    <string name="btn_ignore">تجاهل</string>
+
+    <!-- حوار إعدادات الحلقة -->
+    <string name="loop_description">الحد الأقصى لعدد دورات حلقة الوكيل لكل مهمة (%1$d–%2$d). قد تحتاج المهام المعقدة إلى دورات أكثر؛ القيمة الافتراضية %3$d. يسري من التشغيل التالي.</string>
+    <string name="loop_input_label">عدد الحلقات</string>
+
+    <!-- حوار إعدادات LLM -->
+    <string name="llm_tree4five">LLMProvider من Tree4Five (الافتراضي)</string>
+    <string name="llm_custom">LLM مخصص</string>
+    <string name="llm_api_url">رابط API</string>
+    <string name="llm_api_key">مفتاح API</string>
+    <string name="llm_api_type">نوع API (متوافق مع OpenAI)</string>
+    <string name="llm_model_name">اسم النموذج (مثل gpt-4o-mini أو deepseek-chat)</string>
+
+    <!-- حوار الذاكرة -->
+    <string name="memory_description">حقائق دائمة عن المستخدم، محفوظة كمتجهات ويُستدعى بها قبل كل مهمة.</string>
+    <string name="memory_new_fact">حقيقة جديدة</string>
+    <string name="btn_remember">تذكّر</string>
+    <string name="memory_recall_query">استعلام الاستدعاء</string>
+    <string name="btn_recall">استدعاء</string>
+    <string name="memory_status_stored">حُفظت الحقيقة.</string>
+    <string name="memory_status_store_failed">تعذّر الحفظ (لا توجد متجهات؟).</string>
+    <string name="memory_status_recall_empty">لم يُستدعَ شيء.</string>
+    <string name="memory_recalled">المستدعى:</string>
+    <string name="memory_facts_count">الحقائق المحفوظة (%1$d):</string>
+</resources>

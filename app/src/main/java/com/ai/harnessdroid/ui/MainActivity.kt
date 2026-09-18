@@ -1,5 +1,6 @@
 package com.ai.harnessdroid.ui
 
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -20,12 +21,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringArrayResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import com.ai.harnessdroid.R
 import com.ai.harnessdroid.core.AgentLoopSettings
 import com.ai.harnessdroid.core.SessionEvent
 import com.ai.harnessdroid.core.HarnessService
@@ -40,6 +45,11 @@ class MainActivity : ComponentActivity() {
 
     /** Text zoom factor (sp multiplier); survives restarts via UiZoom prefs. */
     private var textScale = mutableStateOf(1f)
+
+    /** Pins the per-app UI language (LocaleManager); "" follows the system. */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleManager.wrap(newBase))
+    }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
@@ -163,7 +173,7 @@ fun HarnessScreen(
     var inputText by remember { mutableStateOf("") }
     var showPlanMenu by remember { mutableStateOf(false) }
     var showDebugMenu by remember { mutableStateOf(false) }
-    
+
     val chatLog = harnessService?.uiState?.collectAsState(initial = emptyList())?.value ?: emptyList()
     val forensicLog = harnessService?.forensicState?.collectAsState(initial = emptyList())?.value ?: emptyList()
     val taskRunning = harnessService?.taskRunningState?.collectAsState(initial = false)?.value ?: false
@@ -260,7 +270,7 @@ fun HarnessScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Tree4Five Harness", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.app_title), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
                 actions = {
                     // Text zoom controls: A- shrinks, A+ grows (persisted).
                     IconButton(
@@ -280,7 +290,7 @@ fun HarnessScreen(
                     var toolsJson by remember { mutableStateOf("[]") }
                     val scope = rememberCoroutineScope()
 
-                    Button(onClick = { 
+                    Button(onClick = {
                         scope.launch {
                             val tJson = harnessService?.getAvailableTools() ?: "[]"
                             withContext(Dispatchers.Main) {
@@ -289,26 +299,27 @@ fun HarnessScreen(
                             }
                         }
                     }, modifier = Modifier.padding(end = 4.dp)) {
-                        Text("List Tools")
+                        Text(stringResource(R.string.btn_list_tools))
                     }
                     Button(onClick = { harnessService?.clearLog() }, modifier = Modifier.padding(end = 4.dp)) {
-                        Text("Clear")
+                        Text(stringResource(R.string.btn_clear))
                     }
                     Button(
                         onClick = { showPurgeConfirm = true },
                         modifier = Modifier.padding(end = 4.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
                     ) {
-                        Text("Purge & Stop")
+                        Text(stringResource(R.string.btn_purge))
                     }
                     Button(onClick = { showDebugMenu = true }, modifier = Modifier.padding(end = 4.dp)) {
-                        Text("System Log")
+                        Text(stringResource(R.string.btn_system_log))
                     }
                     Button(onClick = { showPlanMenu = true }) {
-                        Text("View Plan")
+                        Text(stringResource(R.string.btn_view_plan))
                     }
 
                     var showMenu by remember { mutableStateOf(false) }
+                    var showLanguageMenu by remember { mutableStateOf(false) }
                     var showVersionDialog by remember { mutableStateOf(false) }
                     var showHelpDialog by remember { mutableStateOf(false) }
                     var showLLMConfigDialog by remember { mutableStateOf(false) }
@@ -316,7 +327,7 @@ fun HarnessScreen(
                     var showLoopSettingsDialog by remember { mutableStateOf(false) }
 
                     IconButton(onClick = { showMenu = true }) {
-                        Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu")
+                        Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.cd_menu))
                     }
 
                     DropdownMenu(
@@ -324,56 +335,104 @@ fun HarnessScreen(
                         onDismissRequest = { showMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Help") },
-                            onClick = { 
+                            text = { Text(stringResource(R.string.menu_help)) },
+                            onClick = {
                                 showMenu = false
                                 showHelpDialog = true
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Version") },
-                            onClick = { 
+                            text = { Text(stringResource(R.string.menu_version)) },
+                            onClick = {
                                 showMenu = false
                                 showVersionDialog = true
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("LLM Configuration") },
+                            text = { Text(stringResource(R.string.menu_llm_config)) },
                             onClick = {
                                 showMenu = false
                                 showLLMConfigDialog = true
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Memory") },
+                            text = { Text(stringResource(R.string.menu_memory)) },
                             onClick = {
                                 showMenu = false
                                 showMemoryDialog = true
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Loop Settings") },
+                            text = { Text(stringResource(R.string.menu_loop_settings)) },
                             onClick = {
                                 showMenu = false
                                 showLoopSettingsDialog = true
                             }
                         )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.menu_language)) },
+                            onClick = {
+                                showMenu = false
+                                showLanguageMenu = true
+                            }
+                        )
+                    }
+
+                    // Language submenu, anchored like the main menu: switching
+                    // persists the tag and recreates the activity so the whole
+                    // composition re-resolves against the new locale.
+                    if (showLanguageMenu) {
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        val currentTag = remember { LocaleManager.load(context) }
+                        DropdownMenu(
+                            expanded = showLanguageMenu,
+                            onDismissRequest = { showLanguageMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.lang_system)) },
+                                leadingIcon = {
+                                    if (currentTag.isEmpty()) Icon(Icons.Default.Check, contentDescription = null)
+                                },
+                                onClick = {
+                                    showLanguageMenu = false
+                                    if (currentTag.isNotEmpty()) {
+                                        LocaleManager.save(context, "")
+                                        (context as? Activity)?.recreate()
+                                    }
+                                }
+                            )
+                            for (lang in LocaleManager.LANGUAGES) {
+                                DropdownMenuItem(
+                                    text = { Text(LocaleManager.nativeName(lang)) },
+                                    leadingIcon = {
+                                        if (currentTag == lang) Icon(Icons.Default.Check, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        showLanguageMenu = false
+                                        if (currentTag != lang) {
+                                            LocaleManager.save(context, lang)
+                                            (context as? Activity)?.recreate()
+                                        }
+                                    }
+                                )
+                            }
+                        }
                     }
 
                     if (showVersionDialog) {
                         val context = androidx.compose.ui.platform.LocalContext.current
                         val versionName = try {
                             context.packageManager
-                                .getPackageInfo(context.packageName, 0).versionName
+                                .getPackageInfo(context.packageName, 0).versionName ?: "?"
                         } catch (_: Exception) {
-                            ""
+                            "?"
                         }
                         AlertDialog(
                             onDismissRequest = { showVersionDialog = false },
-                            title = { Text("Version") },
-                            text = { Text("Tree4Five Harness v$versionName") },
+                            title = { Text(stringResource(R.string.menu_version)) },
+                            text = { Text(stringResource(R.string.version_body, versionName)) },
                             confirmButton = {
-                                Button(onClick = { showVersionDialog = false }) { Text("OK") }
+                                Button(onClick = { showVersionDialog = false }) { Text(stringResource(R.string.btn_ok)) }
                             }
                         )
                     }
@@ -406,10 +465,10 @@ fun HarnessScreen(
                     if (showHelpDialog) {
                         AlertDialog(
                             onDismissRequest = { showHelpDialog = false },
-                            title = { Text("Help") },
-                            text = { Text("Welcome to Tree4Five Harness.\n\nType a request in the input field to interact with the LLM agent. You can view logs, tools, and the agent's plan using the top bar buttons.") },
+                            title = { Text(stringResource(R.string.menu_help)) },
+                            text = { Text(stringResource(R.string.help_body)) },
                             confirmButton = {
-                                Button(onClick = { showHelpDialog = false }) { Text("OK") }
+                                Button(onClick = { showHelpDialog = false }) { Text(stringResource(R.string.btn_ok)) }
                             }
                         )
                     }
@@ -426,13 +485,13 @@ fun HarnessScreen(
                 // list still scrolls normally.
                 .textPinchZoom { factor -> onTextZoomChange?.invoke(factor) }
         ) {
-            val examples = listOf("Summarize emails", "Turn off lights", "Search deepseek harness")
+            val examples = stringArrayResource(R.array.examples)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 examples.forEach { ex ->
                     AssistChip(onClick = { inputText = ex }, label = { Text(ex, maxLines = 1) })
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
 
             LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -447,14 +506,14 @@ fun HarnessScreen(
                     value = inputText,
                     onValueChange = { inputText = it },
                     modifier = Modifier.weight(1f).testTag("request_input"),
-                    placeholder = { Text("Enter request...") }
+                    placeholder = { Text(stringResource(R.string.request_input_hint)) }
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(onClick = {
                     harnessService?.startTask(inputText)
                     inputText = ""
                 }, enabled = harnessService != null, modifier = Modifier.testTag("run_button")) {
-                    Text("Run")
+                    Text(stringResource(R.string.btn_run))
                 }
             }
         }
@@ -465,7 +524,7 @@ fun HarnessScreen(
 fun PlanDialog(chatLog: List<SessionEvent>, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Agent Execution Plan") },
+        title = { Text(stringResource(R.string.plan_title)) },
         text = {
             val planSteps = chatLog.filter { it.role == "assistant" || it.role == "tool" || it.role == "system" }
             LazyColumn {
@@ -480,7 +539,7 @@ fun PlanDialog(chatLog: List<SessionEvent>, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) { Text("Close") }
+            Button(onClick = onDismiss) { Text(stringResource(R.string.btn_close)) }
         }
     )
 }
@@ -489,7 +548,7 @@ fun PlanDialog(chatLog: List<SessionEvent>, onDismiss: () -> Unit) {
 fun SystemMessageDialog(forensicLog: List<String>, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("System/Forensic Logs") },
+        title = { Text(stringResource(R.string.system_log_title)) },
         text = {
             LazyColumn {
                 items(forensicLog) { logLine ->
@@ -503,7 +562,7 @@ fun SystemMessageDialog(forensicLog: List<String>, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) { Text("Close") }
+            Button(onClick = onDismiss) { Text(stringResource(R.string.btn_close)) }
         }
     )
 }
@@ -540,13 +599,13 @@ fun EventBubble(event: SessionEvent) {
 fun PermissionPopup(toolName: String, reason: String, onApprove: () -> Unit, onDeny: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDeny,
-        title = { Text("Permission Required") },
-        text = { Text("The agent wants to use the tool '$toolName'.\nReason: $reason\nDo you allow this?") },
+        title = { Text(stringResource(R.string.permission_title)) },
+        text = { Text(stringResource(R.string.permission_message, toolName, reason)) },
         confirmButton = {
-            Button(onClick = onApprove) { Text("Allow") }
+            Button(onClick = onApprove) { Text(stringResource(R.string.btn_allow)) }
         },
         dismissButton = {
-            OutlinedButton(onClick = onDeny) { Text("Deny") }
+            OutlinedButton(onClick = onDeny) { Text(stringResource(R.string.btn_deny)) }
         }
     )
 }
@@ -555,23 +614,25 @@ fun PermissionPopup(toolName: String, reason: String, onApprove: () -> Unit, onD
 fun PurgeConfirmDialog(running: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Purge & Stop") },
+        title = { Text(stringResource(R.string.btn_purge)) },
         text = {
             Text(
-                (if (running) "Stop the running task and " else "") +
-                    "erase the transcript, all memory vectors (including saved facts), " +
-                    "sub-task sessions, clarifications and approved permissions?\n\n" +
-                    "The System Log is kept."
+                // Two full sentences per locale (never a concatenated prefix:
+                // aapt2 strips trailing whitespace and word order differs).
+                stringResource(
+                    if (running) R.string.purge_confirm_body_running
+                    else R.string.purge_confirm_body
+                )
             )
         },
         confirmButton = {
             Button(
                 onClick = onConfirm,
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
-            ) { Text("Purge") }
+            ) { Text(stringResource(R.string.btn_purge_confirm)) }
         },
         dismissButton = {
-            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+            OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) }
         }
     )
 }
@@ -588,7 +649,7 @@ fun ClarificationPopup(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("The agent has a question") },
+        title = { Text(stringResource(R.string.clarification_title)) },
         text = {
             Column {
                 Text(prompt)
@@ -597,19 +658,19 @@ fun ClarificationPopup(
                     value = value,
                     onValueChange = onValueChange,
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text(defaultAnswer ?: "Your answer...") }
+                    placeholder = { Text(defaultAnswer ?: stringResource(R.string.clarification_hint)) }
                 )
             }
         },
         confirmButton = {
-            Button(onClick = onSubmit) { Text("Submit") }
+            Button(onClick = onSubmit) { Text(stringResource(R.string.btn_submit)) }
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!defaultAnswer.isNullOrBlank()) {
-                    OutlinedButton(onClick = onUseDefault) { Text("Use Default") }
+                    OutlinedButton(onClick = onUseDefault) { Text(stringResource(R.string.btn_use_default)) }
                 }
-                OutlinedButton(onClick = onDismiss) { Text("Ignore") }
+                OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.btn_ignore)) }
             }
         }
     )
@@ -619,23 +680,27 @@ fun ClarificationPopup(
 fun ToolsDialog(toolsJson: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Available Tools") },
+        title = { Text(stringResource(R.string.tools_title)) },
         text = {
+            // stringResource calls stay in this composable scope — inside
+            // LazyColumn's LazyListScope DSL they are not allowed.
+            val unknown = stringResource(R.string.tools_unknown_name)
+            val noDescription = stringResource(R.string.tools_no_description)
             LazyColumn {
                 val toolsArray = try {
                     org.json.JSONArray(toolsJson)
                 } catch (e: Exception) {
                     org.json.JSONArray()
                 }
-                
+
                 val count = toolsArray.length()
                 if (count == 0) {
-                    item { Text("No tools found.") }
+                    item { Text(stringResource(R.string.tools_none)) }
                 } else {
                     for (i in 0 until count) {
                         val tool = toolsArray.getJSONObject(i)
-                        val name = tool.optString("name", "Unknown")
-                        val desc = tool.optString("description", "No description")
+                        val name = tool.optString("name", unknown)
+                        val desc = tool.optString("description", noDescription)
                         item {
                             Column(modifier = Modifier.padding(vertical = 8.dp)) {
                                 Text(name, style = MaterialTheme.typography.titleMedium, color = Color(0xFF4CAF50))
@@ -647,7 +712,7 @@ fun ToolsDialog(toolsJson: String, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) { Text("Close") }
+            Button(onClick = onDismiss) { Text(stringResource(R.string.btn_close)) }
         }
     )
 }
@@ -662,14 +727,14 @@ fun LoopSettingsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Loop Settings") },
+        title = { Text(stringResource(R.string.menu_loop_settings)) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    "Maximum number of agent loop turns per task " +
-                        "(${AgentLoopSettings.MIN}-${AgentLoopSettings.MAX}). " +
-                        "Complex tasks may need more turns; the default is ${AgentLoopSettings.DEFAULT}. " +
-                        "Applies from the next Run.",
+                    stringResource(
+                        R.string.loop_description,
+                        AgentLoopSettings.MIN, AgentLoopSettings.MAX, AgentLoopSettings.DEFAULT
+                    ),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -678,7 +743,7 @@ fun LoopSettingsDialog(
                     // Digits only, kept short: the field can never hold a value
                     // big enough to overflow an Int on parse.
                     onValueChange = { maxTurnsText = it.filter(Char::isDigit).take(2) },
-                    label = { Text("Number of loops") },
+                    label = { Text(stringResource(R.string.loop_input_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("loop_input")
                 )
@@ -693,11 +758,11 @@ fun LoopSettingsDialog(
                 // Out-of-range values are clamped by save(); a blank field is not savable.
                 enabled = parsed != null
             ) {
-                Text("Save")
+                Text(stringResource(R.string.btn_save))
             }
         },
         dismissButton = {
-            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+            OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) }
         }
     )
 }
@@ -716,7 +781,7 @@ fun LLMConfigDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("LLM Configuration") },
+        title = { Text(stringResource(R.string.menu_llm_config)) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -724,43 +789,43 @@ fun LLMConfigDialog(
                         selected = useTree4Five,
                         onClick = { useTree4Five = true }
                     )
-                    Text("Tree4Five LLMProvider (Default)")
+                    Text(stringResource(R.string.llm_tree4five))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
                         selected = !useTree4Five,
                         onClick = { useTree4Five = false }
                     )
-                    Text("Custom LLM")
+                    Text(stringResource(R.string.llm_custom))
                 }
-                
+
                 if (!useTree4Five) {
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = customUrl,
                         onValueChange = { customUrl = it },
-                        label = { Text("API URL") },
+                        label = { Text(stringResource(R.string.llm_api_url)) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = customApiKey,
                         onValueChange = { customApiKey = it },
-                        label = { Text("API Key") },
+                        label = { Text(stringResource(R.string.llm_api_key)) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = customApiType,
                         onValueChange = { customApiType = it },
-                        label = { Text("API Type (OpenAI-compatible)") },
+                        label = { Text(stringResource(R.string.llm_api_type)) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = customModel,
                         onValueChange = { customModel = it },
-                        label = { Text("Model name (e.g. gpt-4o-mini, deepseek-chat)") },
+                        label = { Text(stringResource(R.string.llm_model_name)) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -775,11 +840,11 @@ fun LLMConfigDialog(
                 configManager.customModel = customModel
                 onDismiss()
             }) {
-                Text("Save")
+                Text(stringResource(R.string.btn_save))
             }
         },
         dismissButton = {
-            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+            OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) }
         }
     )
 }
@@ -792,6 +857,12 @@ fun MemoryDialog(
     val scope = rememberCoroutineScope()
     val memoryService = harnessService?.memoryService
     val vectorStore = harnessService?.vectorStore
+
+    // Status messages are captured in composition: the onClick handlers run
+    // outside recomposition and stringResource() is composable-only.
+    val storedMsg = stringResource(R.string.memory_status_stored)
+    val storeFailedMsg = stringResource(R.string.memory_status_store_failed)
+    val recallEmptyMsg = stringResource(R.string.memory_status_recall_empty)
 
     // Facts are re-read from the store after every mutation.
     var facts by remember { mutableStateOf(listOf<String>()) }
@@ -807,11 +878,11 @@ fun MemoryDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Memory") },
+        title = { Text(stringResource(R.string.menu_memory)) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    "Durable user facts, kept as embeddings and recalled before each task.",
+                    stringResource(R.string.memory_description),
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -820,7 +891,7 @@ fun MemoryDialog(
                     OutlinedTextField(
                         value = newFact,
                         onValueChange = { newFact = it },
-                        label = { Text("New fact") },
+                        label = { Text(stringResource(R.string.memory_new_fact)) },
                         modifier = Modifier.weight(1f)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -829,14 +900,14 @@ fun MemoryDialog(
                             val fact = newFact
                             scope.launch {
                                 val stored = memoryService?.remember(fact) ?: false
-                                status = if (stored) "Fact stored." else "Could not store (no embeddings?)."
+                                status = if (stored) storedMsg else storeFailedMsg
                                 newFact = ""
                                 refresh()
                             }
                         },
                         enabled = newFact.isNotBlank() && memoryService != null
                     ) {
-                        Text("Remember")
+                        Text(stringResource(R.string.btn_remember))
                     }
                 }
 
@@ -845,7 +916,7 @@ fun MemoryDialog(
                     OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
-                        label = { Text("Recall query") },
+                        label = { Text(stringResource(R.string.memory_recall_query)) },
                         modifier = Modifier.weight(1f)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -854,12 +925,12 @@ fun MemoryDialog(
                             val q = query
                             scope.launch {
                                 recallResults = memoryService?.recall(q) ?: emptyList()
-                                status = if (recallResults.isEmpty()) "Nothing recalled." else ""
+                                status = if (recallResults.isEmpty()) recallEmptyMsg else ""
                             }
                         },
                         enabled = query.isNotBlank() && memoryService != null
                     ) {
-                        Text("Recall")
+                        Text(stringResource(R.string.btn_recall))
                     }
                 }
 
@@ -870,12 +941,12 @@ fun MemoryDialog(
 
                 if (recallResults.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Recalled:", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.memory_recalled), fontWeight = FontWeight.Bold)
                     recallResults.forEach { Text("- $it", maxLines = 2) }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Stored facts (${facts.size}):", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.memory_facts_count, facts.size), fontWeight = FontWeight.Bold)
                 LazyColumn(modifier = Modifier.heightIn(max = 220.dp)) {
                     items(facts.size) { i ->
                         Text("- ${facts[i]}", maxLines = 2)
@@ -884,7 +955,7 @@ fun MemoryDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) { Text("Close") }
+            Button(onClick = onDismiss) { Text(stringResource(R.string.btn_close)) }
         }
     )
 }

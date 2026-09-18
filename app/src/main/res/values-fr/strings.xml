@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Service d\'accessibilité (ScreenReaderService) -->
+    <string name="screen_reader_label">Lecteur d\'écran Harness Droid</string>
+    <string name="screen_reader_description">Permet à l\'agent Harness Droid de lire l\'écran et d\'interagir avec les applications (p. ex. lire votre boîte Gmail) en votre nom.</string>
+
+    <!-- Barre d\'application -->
+    <string name="btn_list_tools">Lister les outils</string>
+    <string name="btn_clear">Effacer</string>
+    <string name="btn_purge">Purger &amp; arrêter</string>
+    <string name="btn_system_log">Journal système</string>
+    <string name="btn_view_plan">Voir le plan</string>
+    <string name="cd_menu">Menu</string>
+    <string name="cd_zoom_out">Réduire le texte</string>
+    <string name="cd_zoom_in">Agrandir le texte</string>
+
+    <!-- Menu débordant -->
+    <string name="menu_help">Aide</string>
+    <string name="menu_version">Version</string>
+    <string name="menu_llm_config">Configuration LLM</string>
+    <string name="menu_memory">Mémoire</string>
+    <string name="menu_loop_settings">Réglages de boucle</string>
+    <string name="menu_language">Langue</string>
+    <string name="lang_system">Valeur du système</string>
+
+    <!-- Boutons courants -->
+    <string name="btn_ok">OK</string>
+    <string name="btn_close">Fermer</string>
+    <string name="btn_cancel">Annuler</string>
+    <string name="btn_save">Enregistrer</string>
+    <string name="btn_run">Exécuter</string>
+
+    <!-- Dialogue de version -->
+    <string name="version_body">Tree4Five Harness v%1$s</string>
+
+    <!-- Dialogue d\'aide -->
+    <string name="help_body">Bienvenue dans Tree4Five Harness.\n\nSaisissez une requête dans le champ de saisie pour interagir avec l\'agent LLM. Vous pouvez consulter les journaux, les outils et le plan de l\'agent depuis les boutons de la barre supérieure.</string>
+
+    <!-- Écran de chat -->
+    <string name="request_input_hint">Saisissez une requête…</string>
+    <string-array name="examples">
+        <item>Résume mes e-mails</item>
+        <item>Éteins les lumières</item>
+        <item>Cherche deepseek harness</item>
+    </string-array>
+
+    <!-- Dialogues plan / journal système -->
+    <string name="plan_title">Plan d\'exécution de l\'agent</string>
+    <string name="system_log_title">Journaux système/forensiques</string>
+
+    <!-- Dialogue des outils -->
+    <string name="tools_title">Outils disponibles</string>
+    <string name="tools_none">Aucun outil trouvé.</string>
+    <string name="tools_unknown_name">Inconnu</string>
+    <string name="tools_no_description">Aucune description</string>
+
+    <!-- Popup de permission -->
+    <string name="permission_title">Permission requise</string>
+    <string name="permission_message">L\'agent veut utiliser l\'outil « %1$s ».\nMotif : %2$s\nL\'autorisez-vous ?</string>
+    <string name="btn_allow">Autoriser</string>
+    <string name="btn_deny">Refuser</string>
+
+    <!-- Confirmation de purge : deux phrases complètes (jamais de
+         préfixe concaténé — aapt2 supprime les espaces finales) -->
+    <string name="purge_confirm_body">Effacer la transcription, tous les vecteurs de mémoire (faits sauvegardés compris), les sessions de sous-tâches, les clarifications et les permissions approuvées ?\n\nLe journal système est conservé.</string>
+    <string name="purge_confirm_body_running">Arrêter la tâche en cours et effacer la transcription, tous les vecteurs de mémoire (faits sauvegardés compris), les sessions de sous-tâches, les clarifications et les permissions approuvées ?\n\nLe journal système est conservé.</string>
+    <string name="btn_purge_confirm">Purger</string>
+
+    <!-- Popup de clarification -->
+    <string name="clarification_title">L\'agent a une question</string>
+    <string name="clarification_hint">Votre réponse…</string>
+    <string name="btn_submit">Envoyer</string>
+    <string name="btn_use_default">Valeur par défaut</string>
+    <string name="btn_ignore">Ignorer</string>
+
+    <!-- Dialogue des réglages de boucle -->
+    <string name="loop_description">Nombre maximum de tours de boucle de l\'agent par tâche (%1$d–%2$d). Les tâches complexes peuvent en demander plus ; la valeur par défaut est %3$d. Prend effet à la prochaine exécution.</string>
+    <string name="loop_input_label">Nombre de boucles</string>
+
+    <!-- Dialogue de configuration LLM -->
+    <string name="llm_tree4five">LLMProvider Tree4Five (par défaut)</string>
+    <string name="llm_custom">LLM personnalisé</string>
+    <string name="llm_api_url">URL de l\'API</string>
+    <string name="llm_api_key">Clé d\'API</string>
+    <string name="llm_api_type">Type d\'API (compatible OpenAI)</string>
+    <string name="llm_model_name">Nom du modèle (p. ex. gpt-4o-mini, deepseek-chat)</string>
+
+    <!-- Dialogue de mémoire -->
+    <string name="memory_description">Faits durables sur l\'utilisateur, conservés en embeddings et rappelés avant chaque tâche.</string>
+    <string name="memory_new_fact">Nouveau fait</string>
+    <string name="btn_remember">Mémoriser</string>
+    <string name="memory_recall_query">Requête de rappel</string>
+    <string name="btn_recall">Rappeler</string>
+    <string name="memory_status_stored">Fait mémorisé.</string>
+    <string name="memory_status_store_failed">Impossible de mémoriser (pas d\'embeddings ?).</string>
+    <string name="memory_status_recall_empty">Rien de rappelé.</string>
+    <string name="memory_recalled">Rappelé :</string>
+    <string name="memory_facts_count">Faits mémorisés (%1$d) :</string>
+</resources>

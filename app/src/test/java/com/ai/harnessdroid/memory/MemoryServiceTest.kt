@@ -81,8 +81,8 @@ class MemoryServiceTest {
             "[\"The user prefers French\",\"The tablet is a SM-P610\"]"
         })
         val log = listOf(
-            SessionEvent("user", "Retiens que je préfère le français."),
-            SessionEvent("assistant", "Compris, je répondrai en français.")
+            SessionEvent("user", "Remember that I prefer short answers."),
+            SessionEvent("assistant", "Understood, I will answer concisely.")
         )
 
         val stored = service.extractMemories(log)
@@ -91,9 +91,9 @@ class MemoryServiceTest {
         assertEquals(2, store.size)
         // The extraction call carried the transcript.
         assertTrue(generated[0].contains("TRANSCRIPT"))
-        assertTrue(generated[0].contains("je préfère le français"))
+        assertTrue(generated[0].contains("I prefer short answers"))
         // The facts are recallable afterwards.
-        val recalled = service.recall("langue préférée")
+        val recalled = service.recall("preferred answer style")
         assertTrue(recalled.contains("The user prefers French"))
     }
 

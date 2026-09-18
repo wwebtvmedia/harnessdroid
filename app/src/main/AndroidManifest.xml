@@ -83,6 +83,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:localeConfig="@xml/locales_config"
         android:theme="@android:style/Theme.Material.NoActionBar">
         
         <!-- The Foreground Service hosting the Agent Loop -->
@@ -111,7 +112,7 @@
         <service
             android:name=".core.ScreenReaderService"
             android:exported="false"
-            android:label="Harness Droid Screen Reader"
+            android:label="@string/screen_reader_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

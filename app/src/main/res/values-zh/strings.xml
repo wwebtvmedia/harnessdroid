@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 无障碍服务（ScreenReaderService） -->
+    <string name="screen_reader_label">Harness Droid 屏幕阅读器</string>
+    <string name="screen_reader_description">让 Harness Droid 智能体代您读取屏幕并与应用交互（例如读取您的 Gmail 收件箱）。</string>
+
+    <!-- 应用栏 -->
+    <string name="btn_list_tools">列出工具</string>
+    <string name="btn_clear">清空</string>
+    <string name="btn_purge">清除并停止</string>
+    <string name="btn_system_log">系统日志</string>
+    <string name="btn_view_plan">查看计划</string>
+    <string name="cd_menu">菜单</string>
+    <string name="cd_zoom_out">缩小文字</string>
+    <string name="cd_zoom_in">放大文字</string>
+
+    <!-- 溢出菜单 -->
+    <string name="menu_help">帮助</string>
+    <string name="menu_version">版本</string>
+    <string name="menu_llm_config">LLM 配置</string>
+    <string name="menu_memory">记忆</string>
+    <string name="menu_loop_settings">循环设置</string>
+    <string name="menu_language">语言</string>
+    <string name="lang_system">跟随系统</string>
+
+    <!-- 通用按钮 -->
+    <string name="btn_ok">确定</string>
+    <string name="btn_close">关闭</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_save">保存</string>
+    <string name="btn_run">运行</string>
+
+    <!-- 版本对话框 -->
+    <string name="version_body">Tree4Five Harness v%1$s</string>
+
+    <!-- 帮助对话框 -->
+    <string name="help_body">欢迎使用 Tree4Five Harness。\n\n在输入框中输入请求即可与 LLM 智能体交互。您可以通过顶栏按钮查看日志、工具和智能体的计划。</string>
+
+    <!-- 聊天界面 -->
+    <string name="request_input_hint">输入请求…</string>
+    <string-array name="examples">
+        <item>总结我的邮件</item>
+        <item>关灯</item>
+        <item>搜索 deepseek harness</item>
+    </string-array>
+
+    <!-- 计划 / 系统日志对话框 -->
+    <string name="plan_title">智能体执行计划</string>
+    <string name="system_log_title">系统/取证日志</string>
+
+    <!-- 工具对话框 -->
+    <string name="tools_title">可用工具</string>
+    <string name="tools_none">未找到工具。</string>
+    <string name="tools_unknown_name">未知</string>
+    <string name="tools_no_description">无描述</string>
+
+    <!-- 权限弹窗 -->
+    <string name="permission_title">需要授权</string>
+    <string name="permission_message">智能体想使用工具「%1$s」。\n原因：%2$s\n是否允许？</string>
+    <string name="btn_allow">允许</string>
+    <string name="btn_deny">拒绝</string>
+
+    <!-- 清除确认：完整句子两条（不拼接前缀） -->
+    <string name="purge_confirm_body">抹除对话记录、所有记忆向量（含已保存的事实）、子任务会话、澄清内容以及已批准的权限？\n\n系统日志会保留。</string>
+    <string name="purge_confirm_body_running">停止正在运行的任务，并抹除对话记录、所有记忆向量（含已保存的事实）、子任务会话、澄清内容以及已批准的权限？\n\n系统日志会保留。</string>
+    <string name="btn_purge_confirm">清除</string>
+
+    <!-- 澄清弹窗 -->
+    <string name="clarification_title">智能体有一个问题</string>
+    <string name="clarification_hint">您的回答…</string>
+    <string name="btn_submit">提交</string>
+    <string name="btn_use_default">使用默认值</string>
+    <string name="btn_ignore">忽略</string>
+
+    <!-- 循环设置对话框 -->
+    <string name="loop_description">每个任务的最大智能体循环轮数（%1$d–%2$d）。复杂任务可能需要更多轮数；默认值为 %3$d。从下次运行开始生效。</string>
+    <string name="loop_input_label">循环次数</string>
+
+    <!-- LLM 配置对话框 -->
+    <string name="llm_tree4five">Tree4Five LLMProvider（默认）</string>
+    <string name="llm_custom">自定义 LLM</string>
+    <string name="llm_api_url">API URL</string>
+    <string name="llm_api_key">API 密钥</string>
+    <string name="llm_api_type">API 类型（兼容 OpenAI）</string>
+    <string name="llm_model_name">模型名称（如 gpt-4o-mini、deepseek-chat）</string>
+
+    <!-- 记忆对话框 -->
+    <string name="memory_description">关于用户的持久事实，以向量形式保存，并在每个任务前召回。</string>
+    <string name="memory_new_fact">新事实</string>
+    <string name="btn_remember">记住</string>
+    <string name="memory_recall_query">召回查询</string>
+    <string name="btn_recall">召回</string>
+    <string name="memory_status_stored">事实已保存。</string>
+    <string name="memory_status_store_failed">无法保存（缺少向量服务？）。</string>
+    <string name="memory_status_recall_empty">没有召回任何内容。</string>
+    <string name="memory_recalled">已召回：</string>
+    <string name="memory_facts_count">已存事实（%1$d）：</string>
+</resources>
