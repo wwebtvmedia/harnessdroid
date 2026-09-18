@@ -761,7 +761,7 @@ Reply with the final answer to the user: 1-3 plain English sentences using the f
         val coreTools = setOf(
             "launch_app", "send_android_intent", "list_installed_apps",
             "list_compatible_intent_apps", "get_os_info", "ask_human_for_input",
-            "read_screen", "tap_screen", "swipe_screen", "tap_element"
+            "read_screen", "tap_screen", "swipe_screen", "tap_element", "osp_query"
         )
 
         val tokens = preferred.split(Regex("\\s+|[,\\-]"))

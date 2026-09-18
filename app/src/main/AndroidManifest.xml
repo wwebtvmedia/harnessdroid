@@ -54,6 +54,11 @@
         <intent>
             <action android:name="com.tree4five.gguf.ACTION_LLM_SERVICE" />
         </intent>
+        <!-- OSP knowledge federation: bind the OSP Bridge app's foreground node
+             (swarmknowledge_protocol/android/ospbridge) for the osp_query tool. -->
+        <intent>
+            <action android:name="com.swarmknowledge.ospbridge.ACTION_OSP_SERVICE" />
+        </intent>
     </queries>
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

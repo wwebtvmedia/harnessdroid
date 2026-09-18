@@ -106,6 +106,7 @@ Harness Droid natively includes a few helpful tools:
 - `get_os_info`: Retrieves basic device information (API level, Model).
 - `list_harness_intents`: Discovers what tool provider packages are available on the device.
 - `list_installed_apps`: Lists all installed packages.
+- `osp_query`: Asks a verified question to the Omni-Swarm Protocol knowledge swarm. Requires the companion **OSP Bridge** app (`swarmknowledge_protocol/android/ospbridge`) to be installed with its node started; the answer is negotiated over sealed packets with remote OSP peers (e.g. the whatsapp-bot memory with its indexed documents) and firewall-verified against evidence before it reaches the agent. Results carry a `mode` field — only `RESOLVED` answers are verified.
 
 ### Mock Tools
 The repository includes a `MockWebBrowserService` which acts as a simulated tool provider for testing purposes. It exposes a `web_search` tool through MCP.

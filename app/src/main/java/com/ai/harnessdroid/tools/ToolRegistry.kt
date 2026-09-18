@@ -10,6 +10,8 @@ import android.util.Log
 import com.ai.harnessdroid.IToolCallback
 import com.ai.harnessdroid.IToolProviderService
 import com.ai.harnessdroid.core.InteractionManager
+import com.swarmknowledge.ospbridge.IOspCallback
+import com.swarmknowledge.ospbridge.IOspService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -275,6 +277,20 @@ open class ToolRegistry(
                 }
             }
         """.trimIndent()
+        val ospQueryTool = """
+            {
+                "name": "osp_query",
+                "description": "Ask a verified question to the Omni-Swarm Protocol knowledge swarm (OSP Bridge app and its remote peers, e.g. the whatsapp-bot memory with indexed documents). Use it for facts you cannot find on this device. The answer is firewall-verified against evidence chunks; when it is not verifiable you receive the reason instead.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "The factual question to ask the knowledge swarm, phrased as a sentence." },
+                        "tier": { "type": "integer", "description": "Stakes tier 0/1/2: how many peers must agree (0 = one peer, 1 = two peers, 2 = highest stakes). Default 0." }
+                    },
+                    "required": ["query"]
+                }
+            }
+        """.trimIndent()
         allSchemas.put(JSONObject(builtInAskHuman))
         allSchemas.put(JSONObject(listIntentsTool))
         allSchemas.put(JSONObject(osInfoTool))
@@ -293,6 +309,7 @@ open class ToolRegistry(
         if (allowDelegation) {
             allSchemas.put(JSONObject(delegateTaskTool))
         }
+        allSchemas.put(JSONObject(ospQueryTool))
         
         // Removed mock read_emails tool. Real tools will be discovered via Intent.
 
@@ -515,7 +532,7 @@ open class ToolRegistry(
 
         if (toolName == "list_harness_intents") {
             val available = toolRoutingTable.entries.joinToString(", ") { "${it.key} (${it.value})" }
-            val result = "Available intents and packages: $available. Built-in tools: ask_human_for_input, list_harness_intents, get_os_info, list_installed_apps"
+            val result = "Available intents and packages: $available. Built-in tools: ask_human_for_input, list_harness_intents, get_os_info, list_installed_apps, osp_query"
             return@withContext JSONObject().put("result", result).toString()
         }
 
@@ -625,6 +642,55 @@ open class ToolRegistry(
             val defaultAnswer = args.optString("default_answer", "").ifBlank { null }
             val timeoutSeconds = args.optLong("timeout_seconds", 120L).coerceAtLeast(1L)
             return@withContext interactionManager?.requestHumanInput(prompt, defaultAnswer, timeoutSeconds) ?: ""
+        }
+
+        if (toolName == "osp_query") {
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val query = args.optString("query", "").trim()
+            if (query.isEmpty()) {
+                return@withContext JSONObject()
+                    .put("error", "osp_query requires 'query': the factual question to ask the swarm.")
+                    .toString()
+            }
+            val tier = args.optInt("tier", 0).coerceIn(0, 2)
+            // Bind (5 s) then negotiate. The negotiation itself ends in a remote
+            // LLM generation on a peer — minutes, not the generic 15 s tool slot —
+            // hence its own deadline, matched to the bridge's 300 s read timeout.
+            val svc = withTimeoutOrNull(OSP_BIND_TIMEOUT_MS) {
+                try {
+                    ospBind()
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (svc == null) {
+                return@withContext JSONObject()
+                    .put("error", "OSP Bridge not reachable. The OSP Bridge app must be installed with its node started; retry afterwards.")
+                    .toString()
+            }
+            val reportJson = try {
+                withTimeoutOrNull(OSP_QUERY_TIMEOUT_MS) { ospSubmit(svc, query, tier) }
+            } catch (e: Exception) {
+                return@withContext JSONObject().put("error", "osp_query failed: ${e.message}").toString()
+            }
+            if (reportJson == null) {
+                return@withContext JSONObject()
+                    .put("error", "osp_query timed out after ${OSP_QUERY_TIMEOUT_MS / 1000}s without a verified answer. Retry later or rephrase the question.")
+                    .toString()
+            }
+            // Surface only the fields the agent can act on; the raw negotiation
+            // trace stays out of the context window.
+            val report = try { JSONObject(reportJson) } catch (_: Exception) { JSONObject() }
+            val out = JSONObject().put("mode", report.optString("mode", "NO_QUORUM"))
+            val answer = report.optString("answer", "")
+            if (answer.isNotBlank()) out.put("answer", answer)
+            val detail = report.optString("detail", "")
+            if (detail.isNotBlank()) out.put("detail", detail)
+            if (report.has("groundedness")) out.put("groundedness", report.optDouble("groundedness"))
+            if (out.optString("mode") != "RESOLVED") {
+                out.put("hint", "No verified answer (see mode/detail). Do not invent one: say you could not verify it, or retry osp_query with a rephrased factual question.")
+            }
+            return@withContext out.toString()
         }
 
 
@@ -897,7 +963,86 @@ open class ToolRegistry(
         }
         boundServices.clear()
         toolRoutingTable.clear()
+        ospConnection?.let {
+            try {
+                context?.unbindService(it)
+            } catch (e: Exception) {
+                // OSP Bridge may already be unbound or gone.
+            }
+        }
+        ospConnection = null
+        ospService = null
     }
+
+    // -- OSP knowledge federation (ospbridge app over AIDL) -----------------------
+    //
+    // The OSP Bridge app (com.swarmknowledge.ospbridge) runs the Omni-Swarm
+    // Protocol node on this device: an N1 origin that negotiates with remote
+    // peers (whatsapp-bot memory, taught chunks…) and returns a firewall-verified
+    // outcome. AIDL contract mirror-published in aidl/com/swarmknowledge/ospbridge.
+
+    private val OSP_PACKAGE = "com.swarmknowledge.ospbridge"
+    private val OSP_ACTION = "com.swarmknowledge.ospbridge.ACTION_OSP_SERVICE"
+    private val OSP_BIND_TIMEOUT_MS = 5_000L
+    /** Remote peers end in an LLM generation: minutes, not the 15 s tool slot. */
+    private val OSP_QUERY_TIMEOUT_MS = 300_000L
+
+    @Volatile
+    private var ospService: IOspService? = null
+    private var ospConnection: ServiceConnection? = null
+
+    /** Bind the OSP Bridge foreground node; cached like boundServices. */
+    private suspend fun ospBind(): IOspService = suspendCancellableCoroutine { cont ->
+        ospService?.let {
+            cont.resume(it)
+            return@suspendCancellableCoroutine
+        }
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, service: IBinder?) {
+                val svc = IOspService.Stub.asInterface(service)
+                ospService = svc
+                if (cont.isActive) cont.resume(svc)
+            }
+
+            override fun onServiceDisconnected(name: ComponentName) {
+                ospService = null
+            }
+        }
+        ospConnection = connection
+        val intent = Intent(OSP_ACTION).apply { setPackage(OSP_PACKAGE) }
+        val bound = try {
+            context?.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        } catch (e: Exception) {
+            if (cont.isActive) cont.resumeWithException(e)
+            false
+        }
+        if (bound != true && cont.isActive) {
+            cont.resumeWithException(SecurityException("Could not bind to $OSP_PACKAGE (app missing or node stopped)."))
+        }
+    }
+
+    /** One negotiation: submitQuery → registerCallback, resolved by onOutcome. */
+    private suspend fun ospSubmit(svc: IOspService, query: String, tier: Int): String =
+        suspendCancellableCoroutine { cont ->
+            try {
+                val qid = svc.submitQuery(query, tier)
+                if (qid.isNullOrBlank()) {
+                    cont.resume(JSONObject().put("error", "OSP Bridge rejected the query (node not started?).").toString())
+                    return@suspendCancellableCoroutine
+                }
+                // registerCallback lands while the negotiation (seconds to minutes
+                // on a remote LLM) is still running on the service's pool thread.
+                svc.registerCallback(qid, object : IOspCallback.Stub() {
+                    override fun onOutcome(queryId: String?, mode: Int, answer: String?, report: ByteArray?) {
+                        if (cont.isActive) {
+                            cont.resume(report?.toString(Charsets.UTF_8) ?: "{\"mode\":\"NO_QUORUM\"}")
+                        }
+                    }
+                })
+            } catch (e: Exception) {
+                if (cont.isActive) cont.resumeWithException(e)
+            }
+        }
 
     /**
      * Maps a free-form capability hint (e.g. "read_mail", "send_email", "view_web")
