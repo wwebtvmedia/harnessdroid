@@ -11,8 +11,8 @@ android {
         applicationId = "com.ai.harnessdroid"
         minSdk = 26
         targetSdk = 36
-        versionCode = 23
-        versionName = "1.2.15"
+        versionCode = 24
+        versionName = "1.2.16"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
