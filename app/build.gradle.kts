@@ -14,7 +14,9 @@ android {
         applicationId = "com.ai.harnessdroid"
         minSdk = 26
         targetSdk = 36
-        versionCode = 25
+        // 26: 25 was consumed by the first Play upload of 1.2.17 (arm64+x86_64
+        // only) before the all-ABI rebuild — version codes are unique for life.
+        versionCode = 26
         versionName = "1.2.17"
 
         // The Python VM ships for ALL device ABIs: dropping armeabi-v7a/x86 would
