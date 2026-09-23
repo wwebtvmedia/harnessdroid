@@ -85,6 +85,16 @@
     <string name="loop_description">Maximum number of agent loop turns per task (%1$d–%2$d). Complex tasks may need more turns; the default is %3$d. Applies from the next Run.</string>
     <string name="loop_input_label">Number of loops</string>
 
+    <!-- Goal & Mission (Multi-Think S2 + closed goal loop) -->
+    <string name="menu_goal_mission">Goal &amp; Mission</string>
+    <string name="goal_description">The standing goal is kept VERBATIM ahead of every agent call; the mission is the current step toward it. With Autonomous mode on, missions chained by the consolidation pass run back to back within the budgets.</string>
+    <string name="goal_field">Standing goal (kept verbatim, ≤500 chars)</string>
+    <string name="goal_card_label">Mission card (auto-refreshed)</string>
+    <string name="mission_field">Current mission (≤300 chars)</string>
+    <string name="autonomous_toggle">Autonomous mode (chain missions)</string>
+    <string name="autonomous_missions_label">Max consecutive missions</string>
+    <string name="autonomous_description">Autonomous runs stop on: goal achieved, no next mission, %1$d missions or the time budget. Every sensitive tool still asks for approval.</string>
+
     <!-- LLM configuration dialog -->
     <string name="llm_tree4five">Tree4Five LLMProvider (Default)</string>
     <string name="llm_custom">Custom LLM</string>

@@ -75,7 +75,12 @@ class HarnessService : Service(), HumanInteractionHandler {
     private lateinit var llmClient: com.ai.harnessdroid.llm.LLMClient
     private lateinit var clarificationStore: ClarificationStore
     private lateinit var interactionManager: InteractionManager
+    // Private (lazily built); the Goal & Mission dialog reaches the S2 state
+    // through agentLoop's public goalStack.
     private lateinit var agentLoop: AgentLoop
+
+    /** S2 goal/mission state for the UI (read + edit). Null before onCreate. */
+    val goalStack: GoalStack? get() = if (::agentLoop.isInitialized) agentLoop.goalStack else null
     private lateinit var forensicLogger: ForensicLogger
     private lateinit var sessionPersistence: SessionPersistence
     private lateinit var toolRegistry: com.ai.harnessdroid.tools.ToolRegistry
@@ -235,6 +240,24 @@ class HarnessService : Service(), HumanInteractionHandler {
 
                 val result = agentLoop.runTask(request, maxTurns = maxTurns)
                 forensicLogger.logEvent("TASK_END", "Task completed with result: $result")
+
+                // Closed goal loop: when the autonomous toggle is on and the
+                // System-2 pass produced a next mission, keep chaining missions
+                // (budgets enforced by AutonomousMissionRunner) until the goal
+                // reports achieved or a budget trips. Off by default.
+                if (AgentLoopSettings.isAutonomousEnabled(this@HarnessService) && agentLoop.goalStack.hasGoal()) {
+                    val config = AutonomousMissionRunner.Config(
+                        maxMissions = AgentLoopSettings.loadAutoMissions(this@HarnessService),
+                        budgetMs = AgentLoopSettings.loadAutoBudgetMs(this@HarnessService),
+                        cooldownMs = AgentLoopSettings.loadAutoCooldownMs(this@HarnessService),
+                    )
+                    val summary = AutonomousMissionRunner(
+                        agentLoop.goalStack,
+                        { mission -> agentLoop.runTask(mission, maxTurns = maxTurns) },
+                        forensicLogger,
+                    ).run(config)
+                    forensicLogger.logEvent("TASK_END", "Autonomous loop: $summary")
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Stop/Purge must look like a cancellation, not a task failure —
                 // rethrow so the coroutine ends as cancelled.

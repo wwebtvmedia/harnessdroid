@@ -326,6 +326,7 @@ fun HarnessScreen(
                     var showMemoryDialog by remember { mutableStateOf(false) }
                     var showPythonDialog by remember { mutableStateOf(false) }
                     var showLoopSettingsDialog by remember { mutableStateOf(false) }
+                    var showGoalMissionDialog by remember { mutableStateOf(false) }
 
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.cd_menu))
@@ -375,6 +376,13 @@ fun HarnessScreen(
                             onClick = {
                                 showMenu = false
                                 showLoopSettingsDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.menu_goal_mission)) },
+                            onClick = {
+                                showMenu = false
+                                showGoalMissionDialog = true
                             }
                         )
                         DropdownMenuItem(
@@ -470,6 +478,13 @@ fun HarnessScreen(
                         LoopSettingsDialog(
                             context = androidx.compose.ui.platform.LocalContext.current,
                             onDismiss = { showLoopSettingsDialog = false }
+                        )
+                    }
+                    if (showGoalMissionDialog) {
+                        GoalMissionDialog(
+                            harnessService = harnessService,
+                            context = androidx.compose.ui.platform.LocalContext.current,
+                            onDismiss = { showGoalMissionDialog = false }
                         )
                     }
 
@@ -772,6 +787,102 @@ fun LoopSettingsDialog(
                 },
                 // Out-of-range values are clamped by save(); a blank field is not savable.
                 enabled = parsed != null
+            ) {
+                Text(stringResource(R.string.btn_save))
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) }
+        }
+    )
+}
+
+@Composable
+fun GoalMissionDialog(
+    harnessService: HarnessService?,
+    context: Context,
+    onDismiss: () -> Unit
+) {
+    // No service binding (e.g. mid-restart): nothing to show or edit.
+    val goalStack = harnessService?.goalStack ?: return
+    val snap = remember { goalStack.snapshot() }
+    var goalText by remember { mutableStateOf(snap.goal) }
+    var missionText by remember { mutableStateOf(snap.mission) }
+    var autonomous by remember {
+        mutableStateOf(AgentLoopSettings.isAutonomousEnabled(context))
+    }
+    var missionsText by remember {
+        mutableStateOf(AgentLoopSettings.loadAutoMissions(context).toString())
+    }
+    val parsedMissions = missionsText.toIntOrNull()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.menu_goal_mission)) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.goal_description), style = MaterialTheme.typography.bodySmall)
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = goalText,
+                    onValueChange = { goalText = it.take(500) },
+                    label = { Text(stringResource(R.string.goal_field)) },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth().testTag("goal_input")
+                )
+                if (snap.card.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.goal_card_label) + ":\n" + snap.card,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = missionText,
+                    onValueChange = { missionText = it.take(300) },
+                    label = { Text(stringResource(R.string.mission_field)) },
+                    modifier = Modifier.fillMaxWidth().testTag("mission_input")
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = autonomous, onCheckedChange = { autonomous = it })
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.autonomous_toggle))
+                }
+                if (autonomous) {
+                    Text(
+                        stringResource(
+                            R.string.autonomous_description,
+                            AgentLoopSettings.AUTO_MAX_MISSIONS_DEFAULT
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = missionsText,
+                        onValueChange = { missionsText = it.filter(Char::isDigit).take(2) },
+                        label = { Text(stringResource(R.string.autonomous_missions_label)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    // Replace the goal only when the text actually changed: rewriting
+                    // the same goal would wipe the derived card for nothing.
+                    if (goalText.trim() != snap.goal) goalStack.setGoal(goalText)
+                    if (missionText.trim() != snap.mission) {
+                        goalStack.setMission(missionText, maxTurns = AgentLoopSettings.load(context))
+                    }
+                    AgentLoopSettings.setAutonomousEnabled(context, autonomous)
+                    if (autonomous && parsedMissions != null) {
+                        AgentLoopSettings.saveAutoMissions(context, parsedMissions)
+                    }
+                    onDismiss()
+                }
             ) {
                 Text(stringResource(R.string.btn_save))
             }

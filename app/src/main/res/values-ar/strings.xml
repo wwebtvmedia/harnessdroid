@@ -83,6 +83,16 @@
     <string name="loop_description">الحد الأقصى لعدد دورات حلقة الوكيل لكل مهمة (%1$d–%2$d). قد تحتاج المهام المعقدة إلى دورات أكثر؛ القيمة الافتراضية %3$d. يسري من التشغيل التالي.</string>
     <string name="loop_input_label">عدد الحلقات</string>
 
+    <!-- Goal & Mission (Multi-Think S2 + closed goal loop) -->
+    <string name="menu_goal_mission">الهدف والمهمة</string>
+    <string name="goal_description">يُحفظ الهدف الدائم حرفياً قبل كل استدعاء للوكيل؛ والمهمة هي الخطوة الحالية نحوه. عند تشغيل الوضع المستقل، تتتابع المهام التي تنتجها عملية الدمج تلقائياً ضمن الحدود المحددة.</string>
+    <string name="goal_field">الهدف الدائم (يُحفظ حرفياً، ≤500 حرف)</string>
+    <string name="goal_card_label">بطاقة المهمة (تُحدَّث تلقائياً)</string>
+    <string name="mission_field">المهمة الحالية (≤300 حرف)</string>
+    <string name="autonomous_toggle">الوضع المستقل (تتابع المهام)</string>
+    <string name="autonomous_missions_label">الحد الأقصى للمهام المتتابعة</string>
+    <string name="autonomous_description">يتوقف التشغيل المستقل عند: تحقق الهدف، أو غياب مهمة تالية، أو بلوغ %1$d مهمة، أو تجاوز حد الوقت. كل أداة حساسة تظل تطلب الموافقة.</string>
+
     <!-- حوار إعدادات LLM -->
     <string name="llm_tree4five">LLMProvider من Tree4Five (الافتراضي)</string>
     <string name="llm_custom">LLM مخصص</string>

@@ -84,6 +84,16 @@
     <string name="loop_description">Nombre maximum de tours de boucle de l\'agent par tâche (%1$d–%2$d). Les tâches complexes peuvent en demander plus ; la valeur par défaut est %3$d. Prend effet à la prochaine exécution.</string>
     <string name="loop_input_label">Nombre de boucles</string>
 
+    <!-- Goal & Mission (Multi-Think S2 + closed goal loop) -->
+    <string name="menu_goal_mission">But &amp; Mission</string>
+    <string name="goal_description">Le but permanent est conservé VERBATIM devant chaque appel de l\'agent ; la mission est l\'étape courante vers ce but. Avec le mode autonome activé, les missions produites par la passe de consolidation s\'enchaînent seules, dans la limite des budgets.</string>
+    <string name="goal_field">But permanent (conservé verbatim, ≤500 caractères)</string>
+    <string name="goal_card_label">Carte de mission (rafraîchie automatiquement)</string>
+    <string name="mission_field">Mission en cours (≤300 caractères)</string>
+    <string name="autonomous_toggle">Mode autonome (enchaîner les missions)</string>
+    <string name="autonomous_missions_label">Missions consécutives maximum</string>
+    <string name="autonomous_description">Un run autonome s\'arrête sur : but atteint, absence de mission suivante, %1$d missions ou budget de temps. Chaque outil sensible demande toujours une approbation.</string>
+
     <!-- Dialogue de configuration LLM -->
     <string name="llm_tree4five">LLMProvider Tree4Five (par défaut)</string>
     <string name="llm_custom">LLM personnalisé</string>

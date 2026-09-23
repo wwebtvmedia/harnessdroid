@@ -142,6 +142,61 @@ class GoalStack(baseDir: File?, sessionId: String, private val forensicLogger: F
         save()
     }
 
+    // -- Closed goal loop (AutonomousMissionRunner) and UI editing ------------
+
+    /** Immutable view of the S2 state for the UI and the autonomous runner. */
+    data class Snapshot(
+        val goal: String,
+        val card: String,
+        val mission: String,
+        val facts: List<String>,
+        val s2Calls: Int,
+    )
+
+    @Synchronized
+    fun snapshot(): Snapshot = Snapshot(
+        goal = goal, card = card, mission = mission,
+        facts = facts.toList(), s2Calls = s2Calls,
+    )
+
+    @Synchronized fun hasGoal(): Boolean = goal.isNotEmpty()
+    @Synchronized fun currentGoal(): String = goal
+    @Synchronized fun currentMission(): String = mission
+    @Synchronized fun currentCard(): String = card
+
+    /**
+     * UI/runner edition of the standing goal. Replacing a non-empty goal resets
+     * the derived state: the old card, journal AND mission belong to the old goal.
+     */
+    @Synchronized
+    fun setGoal(text: String): String {
+        val clean = text.trim().take(GOAL_MAX_CHARS)
+        if (clean.isEmpty()) return promptBlock()
+        val replaced = goal.isNotEmpty()
+        goal = clean
+        if (replaced) {
+            card = clean.take(CARD_MAX_CHARS)
+            facts.clear()
+            openTurnBriefs.clear()
+            mission = ""
+            missionTurnsLeft = 0
+        } else if (card.isEmpty()) {
+            card = clean.take(CARD_MAX_CHARS)
+        }
+        forensicLogger?.logEvent("GOAL_SET", "goal=${clean.take(80)}${if (replaced) " (replaced)" else ""}")
+        save()
+        return promptBlock()
+    }
+
+    /** UI/runner edition of the current mission (under the standing goal). */
+    @Synchronized
+    fun setMission(text: String, maxTurns: Int) {
+        mission = text.trim().take(MISSION_MAX_CHARS)
+        missionTurnsLeft = maxTurns
+        forensicLogger?.logEvent("MISSION_SET", "mission=${mission.take(80)}")
+        save()
+    }
+
     private fun buildConsolidatePrompt(): String {
         val briefs = if (openTurnBriefs.isEmpty()) "(no tool ran this task)"
         else openTurnBriefs.joinToString("\n") { "- $it" }

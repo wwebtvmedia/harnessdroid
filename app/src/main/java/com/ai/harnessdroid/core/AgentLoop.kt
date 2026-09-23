@@ -38,7 +38,9 @@ class AgentLoop(
     // Multi-Think (MULTITHINK_DESIGN.md): the System-2 state — standing goal and
     // mission card — that the per-turn FSM (System 1) must never lose to context
     // compression. Persisted under <filesDir>/goalstack/, one file per session.
-    private val goalStack = GoalStack(sessionPersistence.baseDir, sessionPersistence.sessionId, forensicLogger)
+    // Public: the closed goal loop (AutonomousMissionRunner) and the Goal &
+    // Mission dialog read and edit the S2 state through it.
+    val goalStack = GoalStack(sessionPersistence.baseDir, sessionPersistence.sessionId, forensicLogger)
     // Compression and mitigation configuration. Read from system properties/env vars so JVM
     // unit tests can override them; on a real Android process these resolve to the defaults.
     // Inline-history budget: the model's context window decides it (via

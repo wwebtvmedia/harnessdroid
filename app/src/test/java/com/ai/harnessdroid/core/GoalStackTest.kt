@@ -149,6 +149,54 @@ class GoalStackTest {
         assertTrue(block.contains("<GOAL>Persistent goal</GOAL>"))
         assertTrue(reloaded.promptBlock().isNotEmpty())
     }
+
+    // -- editing API for the Goal & Mission dialog and the closed goal loop ----
+
+    @Test
+    fun `setGoal establishes a fresh goal and snapshot reflects it`() {
+        val dir = Files.createTempDirectory("goalstack").toFile()
+        val stack = newStack(dir)
+
+        stack.setGoal("Audit the sync settings")
+        assertTrue(stack.hasGoal())
+        assertTrue(stack.promptBlock().contains("<GOAL>Audit the sync settings</GOAL>"))
+
+        stack.setMission("Open the sync screen", maxTurns = 4)
+        val snap = stack.snapshot()
+        assertEquals("Audit the sync settings", snap.goal)
+        assertEquals("Open the sync screen", snap.mission)
+        assertTrue(stack.currentMission() == "Open the sync screen")
+        assertTrue(stack.currentCard().isNotEmpty())
+    }
+
+    @Test
+    fun `replacing the goal resets the derived state`() = runBlocking {
+        val dir = Files.createTempDirectory("goalstack").toFile()
+        val stack = newStack(dir)
+        stack.setGoal("Old goal")
+        stack.setMission("Old mission", maxTurns = 3)
+        stack.recordTurn("read_screen", ok = true, brief = "brief under the old goal")
+
+        stack.setGoal("Brand new goal")
+        val snap = stack.snapshot()
+        assertEquals("Brand new goal", snap.goal)
+        // the new goal's card is reseeded from itself, not from the old card
+        assertTrue(snap.card.contains("Brand new goal"))
+        // old mission is stale for a new goal: dropped from the injection block
+        assertFalse(stack.promptBlock().contains("<MISSION>Old mission</MISSION>"))
+    }
+
+    @Test
+    fun `setMission caps length and empty goal edit is a no-op`() {
+        val dir = Files.createTempDirectory("goalstack").toFile()
+        val stack = newStack(dir)
+        stack.setMission("M".repeat(4000), maxTurns = 2)
+        assertTrue("mission capped at 300", stack.currentMission().length <= 300)
+
+        // editing an empty goal must not create a goal out of thin air
+        stack.setGoal("   ")
+        assertFalse(stack.hasGoal())
+    }
 }
 
 private class GoalLogger : ForensicLogger(null as android.content.Context?) {

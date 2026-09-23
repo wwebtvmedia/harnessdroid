@@ -83,6 +83,16 @@
     <string name="loop_description">每个任务的最大智能体循环轮数（%1$d–%2$d）。复杂任务可能需要更多轮数；默认值为 %3$d。从下次运行开始生效。</string>
     <string name="loop_input_label">循环次数</string>
 
+    <!-- Goal & Mission (Multi-Think S2 + closed goal loop) -->
+    <string name="menu_goal_mission">目标与任务</string>
+    <string name="goal_description">长期目标在每个智能体调用前保持逐字不变；任务是迈向该目标的当前步骤。开启自主模式后，整合产生的任务会在预算内自动连续执行。</string>
+    <string name="goal_field">长期目标（逐字保留，≤500 字符）</string>
+    <string name="goal_card_label">任务卡片（自动刷新）</string>
+    <string name="mission_field">当前任务（≤300 字符）</string>
+    <string name="autonomous_toggle">自主模式（连续执行任务）</string>
+    <string name="autonomous_missions_label">连续任务上限</string>
+    <string name="autonomous_description">自主运行在以下情况停止：目标达成、无后续任务、达到 %1$d 个任务或时间预算。每个敏感工具仍需人工批准。</string>
+
     <!-- LLM 配置对话框 -->
     <string name="llm_tree4five">Tree4Five LLMProvider（默认）</string>
     <string name="llm_custom">自定义 LLM</string>
