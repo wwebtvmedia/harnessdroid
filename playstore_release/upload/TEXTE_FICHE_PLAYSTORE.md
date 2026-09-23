@@ -34,17 +34,19 @@ Alternative : `Your on-device AI agent: local LLM, real tools, private by design
 Harness Droid is an AI agent that runs on your Android phone or tablet. It turns plain-language requests into real actions: it inspects your device, discovers installed apps, executes Android intents, and reports every step live in the chat. No cloud account, no copy-pasting — just ask.
 
 HOW IT WORKS
-• Type a request such as "What is the OS info of this device?" or "Launch the Gmail app".
+• Type a request such as "What is the OS info of this device?", "Launch the Gmail app", or "Write a Python program listing the first 20 primes".
 • The agent plans its work and calls the right tools one by one; you watch each call and result appear in the conversation.
 • Not sure what you meant? The agent asks you a clarification question right inside the app, waits up to 2 minutes for your answer, and falls back safely if you are away.
 • Review everything afterwards in the Execution Plan view and the System Log.
 
 KEY FEATURES
 • Real tool execution — get device OS info, list installed apps, find apps that match an intent, launch apps by name, send standard Android intents (open a URL, send an email, dial a number), and run skill agent commands.
+• Built-in Python engine — ask for a Python program and the agent writes it, runs it in a sandboxed on-device MicroPython VM, and brings the output back into the chat; saved plans rerun later, and scheduled Python services keep running between tasks.
 • Human-in-the-loop — the agent hands control back to you before using sensitive tools and whenever it needs a clarification; you approve or answer, and it continues.
 • Local-first AI — prompts are answered by an on-device GGUF model served by the companion Tree4Five GGUF app, so your data stays on your device. Prefer a remote model? Plug any OpenAI-compatible API (URL, key, model name) in Settings.
 • Long-term memory — tell the agent "Remember that I prefer concise answers" and it stores your preference as embeddings on the device, then recalls it in later tasks. Manage stored facts from the Memory panel.
 • Embeddings-powered context — long task histories are compressed into vector embeddings instead of text summaries, injected back into the model's embedding space (with automatic fallback to the classic text path when the model or service does not support it).
+• Goal & mission tracking — a standing goal and a live mission card carry long-running objectives across tasks: a slow-thinking pass consolidates progress after each task so the plan never loses the thread.
 • Built for phones and tablets — a UI that scales from phones to 10-inch tablets.
 • Full transparency — the Available Tools dialog shows exactly what the agent can do, and every user message, tool call, and result is kept in the session history.
 
@@ -93,17 +95,19 @@ On-device AI agent that runs tools, launches apps, and answers offline.
 Harness Droid is an AI agent that runs on your Android phone or tablet. It turns plain-language requests into real actions: it inspects your device, discovers installed apps, executes Android intents, and reports every step live in the chat. No cloud account, no copy-pasting — just ask.
 
 HOW IT WORKS
-• Type a request such as "What is the OS info of this device?" or "Launch the Gmail app".
+• Type a request such as "What is the OS info of this device?", "Launch the Gmail app", or "Write a Python program listing the first 20 primes".
 • The agent plans its work and calls the right tools one by one; you watch each call and result appear in the conversation.
 • Not sure what you meant? The agent asks you a clarification question right inside the app, waits up to 2 minutes for your answer, and falls back safely if you are away.
 • Review everything afterwards in the Execution Plan view and the System Log.
 
 KEY FEATURES
 • Real tool execution — get device OS info, list installed apps, find apps that match an intent, launch apps by name, send standard Android intents (open a URL, send an email, dial a number), and run skill agent commands.
+• Built-in Python engine — ask for a Python program and the agent writes it, runs it in a sandboxed on-device MicroPython VM, and brings the output back into the chat; saved plans rerun later, and scheduled Python services keep running between tasks.
 • Human-in-the-loop — the agent hands control back to you before using sensitive tools and whenever it needs a clarification; you approve or answer, and it continues.
 • Local-first AI — prompts are answered by an on-device GGUF model served by the companion Tree4Five GGUF app, so your data stays on your device. Prefer a remote model? Plug any OpenAI-compatible API (URL, key, model name) in Settings.
 • Long-term memory — tell the agent "Remember that I prefer concise answers" and it stores your preference as embeddings on the device, then recalls it in later tasks. Manage stored facts from the Memory panel.
 • Embeddings-powered context — long task histories are compressed into vector embeddings instead of text summaries, injected back into the model's embedding space (with automatic fallback to the classic text path when the model or service does not support it).
+• Goal & mission tracking — a standing goal and a live mission card carry long-running objectives across tasks: a slow-thinking pass consolidates progress after each task so the plan never loses the thread.
 • Built for phones and tablets — a UI that scales from phones to 10-inch tablets.
 • Full transparency — the Available Tools dialog shows exactly what the agent can do, and every user message, tool call, and result is kept in the session history.
 
@@ -142,17 +146,19 @@ Agent IA local : exécute des outils, lance vos apps, répond hors ligne.
 Harness Droid est un agent IA qui s'exécute sur votre téléphone ou votre tablette Android. Il transforme vos demandes en langage naturel en actions réelles : il analyse votre appareil, découvre les applications installées, exécute des intents Android et affiche chaque étape en direct dans la conversation. Aucun compte cloud, aucun copier-coller — il suffit de demander.
 
 FONCTIONNEMENT
-• Saisissez une demande telle que « Quelles sont les infos système de cet appareil ? » ou « Lance l'application Gmail ».
+• Saisissez une demande telle que « Quelles sont les infos système de cet appareil ? », « Lance l'application Gmail » ou « Écris un programme Python qui liste les 20 premiers nombres premiers ».
 • L'agent planifie son travail et appelle les bons outils un par un ; vous voyez chaque appel et chaque résultat apparaître dans la conversation.
 • Un doute sur votre demande ? L'agent vous pose une question de clarification directement dans l'application, attend votre réponse jusqu'à 2 minutes, puis adopte un comportement de repli sûr si vous êtes absent.
 • Tout est consultable ensuite dans la vue Plan d'exécution et le Journal système.
 
 POINTS CLÉS
 • Exécution réelle d'outils — infos système de l'appareil, liste des applications installées, recherche d'apps compatibles avec un intent, lancement d'applications par nom, envoi d'intents Android standards (ouvrir une URL, envoyer un e-mail, appeler un numéro) et commandes skill agent.
+• Moteur Python intégré — demandez un programme Python : l'agent l'écrit, l'exécute dans une VM MicroPython bac à sable sur l'appareil et rapporte le résultat dans la conversation ; les plans enregistrés se relancent, et les services Python programmés continuent entre les tâches.
 • Humain dans la boucle — l'agent vous redonne la main avant d'utiliser des outils sensibles et chaque fois qu'il a besoin d'une clarification ; vous approuvez ou répondez, et il continue.
 • IA locale d'abord — vos requêtes sont traitées par un modèle GGUF embarqué servi par l'application compagne Tree4Five GGUF : vos données restent sur votre appareil. Vous préférez un modèle distant ? Branchez n'importe quelle API compatible OpenAI (URL, clé, nom de modèle) dans les paramètres.
 • Mémoire long terme — dites « Retiens que je préfère les réponses concises » : l'agent enregistre votre préférence sous forme d'embeddings sur l'appareil et s'en souvient lors des tâches suivantes. Les faits mémorisés se gèrent depuis le panneau Mémoire.
 • Contexte par embeddings — les historiques de tâches longs sont compressés en vecteurs d'embeddings plutôt qu'en résumés texte, puis réinjectés dans l'espace d'embeddings du modèle (avec repli automatique vers le chemin texte classique si le modèle ou le service ne le prend pas en charge).
+• Suivi but & mission — un but permanent et une carte de mission vivante portent les objectifs longue durée d'une tâche à l'autre : une passe de réflexion lente consolide l'avancement après chaque tâche pour ne jamais perdre le fil.
 • Conçu pour téléphones et tablettes — une interface qui s'adapte des téléphones aux tablettes 10 pouces.
 • Transparence totale — la boîte de dialogue Outils disponibles montre exactement ce que l'agent peut faire, et chaque message, appel d'outil et résultat est conservé dans l'historique de session.
 
@@ -171,9 +177,29 @@ Configuration requise : Android 13+ recommandé pour de meilleures performances 
 
 ---
 
-## Notes de version 1.2.3 (champ « What's new » / Actualités) — prêt à coller
+## Notes de version 1.2.17 (champ « What's new » / Actualités) — prêt à coller
 
-### Anglais (en-US), 391 caractères (max 500)
+### Anglais (en-US), 422 caractères (max 500)
+
+```
+New in 1.2.17:
+• Built-in Python engine: ask for a Python program and the agent writes it and runs it in a sandboxed on-device MicroPython VM; files persist and scheduled services keep running between tasks.
+• Goal & mission memory: standing goals now survive across tasks, with a consolidation pass after each task.
+• New Python panel in the menu: VM status, restart, wipe sandbox.
+• Bug fixes and stability improvements.
+```
+
+### Français (fr-FR), 495 caractères (max 500)
+
+```
+Nouveautés 1.2.17 :
+• Moteur Python intégré : demandez un programme Python, l'agent l'écrit et l'exécute dans une VM MicroPython bac à sable sur l'appareil ; les fichiers persistent et les services programmés continuent entre les tâches.
+• Mémoire but & mission : les buts permanents survivent désormais entre les tâches, avec une passe de consolidation après chacune.
+• Nouveau panneau Python dans le menu : état de la VM, redémarrage, vidage du bac à sable.
+• Correctifs et gains de stabilité.
+```
+
+## Notes de version 1.2.3 (archivées)
 
 ```
 New in 1.2.3:

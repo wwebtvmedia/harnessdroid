@@ -14,8 +14,8 @@ android {
         applicationId = "com.ai.harnessdroid"
         minSdk = 26
         targetSdk = 36
-        versionCode = 24
-        versionName = "1.2.16"
+        versionCode = 25
+        versionName = "1.2.17"
 
         // The Python VM ships for the device ABIs we test on; armeabi-v7a is
         // deliberately out of scope for now.
