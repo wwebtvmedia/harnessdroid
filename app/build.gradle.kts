@@ -17,10 +17,11 @@ android {
         versionCode = 25
         versionName = "1.2.17"
 
-        // The Python VM ships for the device ABIs we test on; armeabi-v7a is
-        // deliberately out of scope for now.
+        // The Python VM ships for ALL device ABIs: dropping armeabi-v7a/x86 would
+        // make the Play Store listing incompatible with devices the previous
+        // release supported (the bundle only ships the ABI the device needs).
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
         }
         externalNativeBuild {
             cmake {
