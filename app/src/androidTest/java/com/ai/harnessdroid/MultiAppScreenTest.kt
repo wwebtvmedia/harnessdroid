@@ -30,16 +30,22 @@ class MultiAppScreenTest {
      * `am instrument` restarts the app process; the OS then treats the accessibility
      * service as crashed and stops binding it until it is toggled again. Re-enable it
      * from the test through UiAutomation (shell uid may write secure settings).
+     *
+     * The delete and the put MUST be separate commands with a real delay between
+     * them: issued back to back, the Samsung AMS observer sees "enabled services
+     * unchanged" and never rebinds (Bound and Binding both stay empty forever).
      */
     private fun reEnableScreenReaderViaShell() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val pfd = instrumentation.uiAutomation.executeShellCommand(
-            "settings delete secure enabled_accessibility_services; " +
-                "settings put secure enabled_accessibility_services " +
-                "com.ai.harnessdroid/com.ai.harnessdroid.core.ScreenReaderService; " +
-                "settings put secure accessibility_enabled 1"
-        )
-        try { pfd.close() } catch (_: Exception) {}
+        fun shell(cmd: String) {
+            val pfd = instrumentation.uiAutomation.executeShellCommand(cmd)
+            try { pfd.close() } catch (_: Exception) {}
+        }
+        shell("settings delete secure enabled_accessibility_services")
+        Thread.sleep(2_500)
+        shell("settings put secure enabled_accessibility_services " +
+            "com.ai.harnessdroid/com.ai.harnessdroid.core.ScreenReaderService")
+        shell("settings put secure accessibility_enabled 1")
     }
 
     /** Waits for the accessibility bridge, re-enabling it once if the OS dropped it. */
