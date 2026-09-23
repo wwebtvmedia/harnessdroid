@@ -20,6 +20,13 @@
     <string name="menu_llm_config">LLM 配置</string>
     <string name="menu_memory">记忆</string>
     <string name="menu_loop_settings">循环设置</string>
+    <string name="menu_python">Python 虚拟机</string>
+    <string name="python_description">内置 MicroPython：LLM 可编写小型 Python 计划，在沙箱中运行（独立文件系统、内部 asyncio 调度器）。已保存的计划和数据在重启后保留；“清除并停止”会将其删除。</string>
+    <string name="python_status_never_booted">虚拟机尚未启动 - 首次调用 run_python_plan 时启动。</string>
+    <string name="python_sandbox">沙箱文件（%1$d）：</string>
+    <string name="python_sandbox_empty">（空）</string>
+    <string name="btn_python_restart">重启虚拟机</string>
+    <string name="btn_python_wipe">清空沙箱</string>
     <string name="menu_language">语言</string>
     <string name="lang_system">跟随系统</string>
 

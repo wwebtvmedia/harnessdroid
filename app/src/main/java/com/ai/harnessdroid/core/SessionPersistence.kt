@@ -44,11 +44,15 @@ data class SessionEvent(
     }
 }
 
-open class SessionPersistence(private val context: Context?, private val sessionId: String) {
+open class SessionPersistence(private val context: Context?, val sessionId: String) {
     private val TAG = "SessionPersistence"
     
     private val memoryFile: File
         get() = if (context != null) File(context.filesDir, "sessions/${sessionId}.jsonl.gz") else File("/tmp", "sessions/${sessionId}.jsonl.gz")
+
+    /** Root directory for per-session side state (e.g. GoalStack); /tmp on the JVM. */
+    open val baseDir: File
+        get() = context?.filesDir ?: File("/tmp")
 
     private val _logFlow = MutableStateFlow<List<SessionEvent>>(emptyList())
     val logFlow: StateFlow<List<SessionEvent>> = _logFlow.asStateFlow()

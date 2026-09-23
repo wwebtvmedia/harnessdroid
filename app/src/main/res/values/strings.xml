@@ -21,6 +21,13 @@
     <string name="menu_llm_config">LLM Configuration</string>
     <string name="menu_memory">Memory</string>
     <string name="menu_loop_settings">Loop Settings</string>
+    <string name="menu_python">Python VM</string>
+    <string name="python_description">Embedded MicroPython: the LLM can write small Python plans that run sandboxed (own files, internal asyncio scheduler). Saved plans and data survive restarts; "Purge &amp; Stop" wipes them.</string>
+    <string name="python_status_never_booted">VM not started yet - it boots on the first run_python_plan call.</string>
+    <string name="python_sandbox">Sandbox files (%1$d):</string>
+    <string name="python_sandbox_empty">(empty)</string>
+    <string name="btn_python_restart">Restart VM</string>
+    <string name="btn_python_wipe">Wipe sandbox</string>
     <string name="menu_language">Language</string>
     <string name="lang_system">System default</string>
 

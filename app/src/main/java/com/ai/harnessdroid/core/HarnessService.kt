@@ -80,6 +80,9 @@ class HarnessService : Service(), HumanInteractionHandler {
     private lateinit var sessionPersistence: SessionPersistence
     private lateinit var toolRegistry: com.ai.harnessdroid.tools.ToolRegistry
 
+    // Embedded MicroPython VM (lazy: boots on the first run_python_plan call).
+    private lateinit var pythonEngine: com.ai.harnessdroid.python.PythonEngine
+
     // Shared embedding space, exposed for the memory UI.
     var vectorStore: com.ai.harnessdroid.memory.VectorStore? = null
         private set
@@ -105,6 +108,12 @@ class HarnessService : Service(), HumanInteractionHandler {
         clarificationStore = ClarificationStore(filesDir)
         val interactionManager = InteractionManager(this, this).also { this.interactionManager = it }
         toolRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager)
+        // Python VM: the engine probes the LLM's context window to size its heap
+        // (same probe AgentLoop uses), and the VM's tool bridge routes back
+        // through this registry - guards, caps and logs apply to plan-driven
+        // tool calls like any other.
+        pythonEngine = com.ai.harnessdroid.python.PythonEngine(this, forensicLogger, toolRegistry, llmClient)
+        toolRegistry.pythonEngine = pythonEngine
         
         sessionPersistence = SessionPersistence(this, "session_1")
 
@@ -147,6 +156,7 @@ class HarnessService : Service(), HumanInteractionHandler {
             sessionPersistence.clearLog()
             val droppedVectors = vectorStore?.purgeKind("history") ?: 0
             agentLoop.resetContext()
+            agentLoop.resetGoal()
             forensicLogger.logEvent("SESSION_PURGED", "dropped ${previous.size} session events, $droppedVectors history vectors")
         }
     }
@@ -166,6 +176,7 @@ class HarnessService : Service(), HumanInteractionHandler {
         var subRegistry: com.ai.harnessdroid.tools.ToolRegistry? = null
         return try {
             subRegistry = com.ai.harnessdroid.tools.ToolRegistry(this, interactionManager, allowDelegation = false)
+            subRegistry.pythonEngine = pythonEngine
             val subSession = SessionPersistence(this, "subtask_${System.currentTimeMillis()}")
             subSession.initializeLog()
             val subLoop = AgentLoop(llmClient, subRegistry, subSession, forensicLogger, vectorStore, memoryService)
@@ -281,6 +292,10 @@ class HarnessService : Service(), HumanInteractionHandler {
                 // 2. Release tool-provider bindings.
                 toolRegistry.unbindAll()
 
+                // 2b. Python VM: stop the interpreter and wipe its sandbox so no
+                //     plan, file or scheduled service survives a Purge & Stop.
+                runCatching { pythonEngine.stop(wipe = true) }
+
                 // 3. Transcript: in-memory flow + session_1.jsonl.gz (empties _uiState).
                 sessionPersistence.clearLog()
 
@@ -290,8 +305,10 @@ class HarnessService : Service(), HumanInteractionHandler {
                 // 5. Vectors: history chunks AND durable kind="memory" facts.
                 val vectors = vectorStore?.purgeAll() ?: 0
 
-                // 6. Embedder ingest cursor + in-memory AgentLoop state.
+                // 6. Embedder ingest cursor + in-memory AgentLoop state
+                //     (the standing goal dies with the session, like the vectors).
                 agentLoop.resetContext()
+                agentLoop.resetGoal()
 
                 // 7. Clarification records on disk.
                 clarificationStore.clear()
@@ -428,6 +445,45 @@ class HarnessService : Service(), HumanInteractionHandler {
         super.onDestroy()
         // Release the binder connections to third-party tool providers.
         toolRegistry.unbindAll()
+        // Stop the python VM (sandbox files persist across restarts on purpose:
+        // plans saved there are user data; only Purge & Stop wipes them).
+        if (::pythonEngine.isInitialized) {
+            runCatching { pythonEngine.stop(wipe = false) }
+        }
         job.cancel()
+    }
+
+    // ------------------------------------------------------------- python UI
+
+    /** Status snapshot for the Python dialog (null when the VM never booted). */
+    fun pythonStatus(): org.json.JSONObject? =
+        if (::pythonEngine.isInitialized) pythonEngine.status() else null
+
+    /** Stop + fresh VM on the next plan; the sandbox survives. */
+    fun restartPython() {
+        if (::pythonEngine.isInitialized) {
+            pythonEngine.stop(wipe = false)
+            forensicLogger.logEvent("PYTHON_RESTART", "VM stopped; restarts on next run_python_plan")
+        }
+    }
+
+    /** Stop + wipe the sandbox directory. */
+    fun wipePythonSandbox() {
+        if (::pythonEngine.isInitialized) {
+            pythonEngine.stop(wipe = true)
+        }
+    }
+
+    /** Relative listing of the python sandbox for the dialog (bounded). */
+    fun pythonSandboxListing(): List<String> {
+        if (!::pythonEngine.isInitialized) return emptyList()
+        val root = pythonEngine.sandboxDir
+        if (!root.isDirectory) return emptyList()
+        return root.walkTopDown().maxDepth(3)
+            .filter { it.isFile }
+            .map { it.relativeTo(root).path }
+            .sorted()
+            .take(50)
+            .toList()
     }
 }

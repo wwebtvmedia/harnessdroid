@@ -6,6 +6,9 @@ plugins {
 android {
     namespace = "com.ai.harnessdroid"
     compileSdk = 36
+    // Pinned: the VM's linker flags assume this NDK. r27+ passes the 16 KB
+    // alignment flags itself and can replace them (CMakeLists.txt comment).
+    ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "com.ai.harnessdroid"
@@ -14,7 +17,32 @@ android {
         versionCode = 24
         versionName = "1.2.16"
 
+        // The Python VM ships for the device ABIs we test on; armeabi-v7a is
+        // deliberately out of scope for now.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DANDROID_PLATFORM=android-26", "-DCMAKE_BUILD_TYPE=Release")
+                cppFlags += ""
+            }
+        }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Uncompressed native libs: required for the 16 KB-page mmap path.
+            useLegacyPackaging = false
+        }
     }
 
     signingConfigs {

@@ -20,6 +20,13 @@
     <string name="menu_llm_config">إعدادات LLM</string>
     <string name="menu_memory">الذاكرة</string>
     <string name="menu_loop_settings">إعدادات الحلقة</string>
+    <string name="menu_python">آلة بايثون الافتراضية</string>
+    <string name="python_description">‏MicroPython مدمج: يمكن للنموذج كتابة خطط بايثون صغيرة تعمل في بيئة معزولة (ملفات خاصة ومجدول asyncio داخلي). الخطط والبيانات المحفوظة تبقى بعد إعادة التشغيل؛ و«إزالة وإيقاف» تمحوها.</string>
+    <string name="python_status_never_booted">لم تبدأ الآلة الافتراضية بعد - تبدأ عند أول استدعاء run_python_plan.</string>
+    <string name="python_sandbox">ملفات البيئة المعزولة (%1$d):</string>
+    <string name="python_sandbox_empty">(فارغ)</string>
+    <string name="btn_python_restart">إعادة تشغيل الآلة</string>
+    <string name="btn_python_wipe">إفراغ البيئة المعزولة</string>
     <string name="menu_language">اللغة</string>
     <string name="lang_system">لغة النظام</string>
 

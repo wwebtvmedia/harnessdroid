@@ -20,6 +20,13 @@
     <string name="menu_llm_config">Configuration LLM</string>
     <string name="menu_memory">Mémoire</string>
     <string name="menu_loop_settings">Réglages de boucle</string>
+    <string name="menu_python">VM Python</string>
+    <string name="python_description">MicroPython embarqué : le LLM peut écrire de petits plans Python exécutés en bac à sable (fichiers propres, ordonnanceur asyncio interne). Les plans et données survivent aux redémarrages ; « Purger &amp; Arrêter » les efface.</string>
+    <string name="python_status_never_booted">VM pas encore démarrée - elle démarre au premier appel run_python_plan.</string>
+    <string name="python_sandbox">Fichiers du bac à sable (%1$d) :</string>
+    <string name="python_sandbox_empty">(vide)</string>
+    <string name="btn_python_restart">Redémarrer la VM</string>
+    <string name="btn_python_wipe">Vider le bac à sable</string>
     <string name="menu_language">Langue</string>
     <string name="lang_system">Valeur du système</string>
 

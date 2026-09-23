@@ -20,6 +20,7 @@ settings put secure accessibility_enabled 1"
 
 PLAIN_CLASSES=(
   com.ai.harnessdroid.PurgeStopInstrumentedTest
+  com.ai.harnessdroid.python.PythonPlanInstrumentedTest
   com.ai.harnessdroid.core.AgentLoopTest
   com.ai.harnessdroid.IntegrationTest
   com.ai.harnessdroid.LaunchAppsInstrumentedTest

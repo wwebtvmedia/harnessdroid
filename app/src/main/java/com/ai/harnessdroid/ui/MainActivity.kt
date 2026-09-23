@@ -324,6 +324,7 @@ fun HarnessScreen(
                     var showHelpDialog by remember { mutableStateOf(false) }
                     var showLLMConfigDialog by remember { mutableStateOf(false) }
                     var showMemoryDialog by remember { mutableStateOf(false) }
+                    var showPythonDialog by remember { mutableStateOf(false) }
                     var showLoopSettingsDialog by remember { mutableStateOf(false) }
 
                     IconButton(onClick = { showMenu = true }) {
@@ -360,6 +361,13 @@ fun HarnessScreen(
                             onClick = {
                                 showMenu = false
                                 showMemoryDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.menu_python)) },
+                            onClick = {
+                                showMenu = false
+                                showPythonDialog = true
                             }
                         )
                         DropdownMenuItem(
@@ -448,6 +456,13 @@ fun HarnessScreen(
                         MemoryDialog(
                             harnessService = harnessService,
                             onDismiss = { showMemoryDialog = false }
+                        )
+                    }
+
+                    if (showPythonDialog) {
+                        PythonDialog(
+                            harnessService = harnessService,
+                            onDismiss = { showPythonDialog = false }
                         )
                     }
 
@@ -956,6 +971,86 @@ fun MemoryDialog(
         },
         confirmButton = {
             Button(onClick = onDismiss) { Text(stringResource(R.string.btn_close)) }
+        }
+    )
+}
+
+@Composable
+fun PythonDialog(
+    harnessService: HarnessService?,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+
+    // Status + sandbox listing are re-read after every action.
+    var statusLine by remember { mutableStateOf("") }
+    var sandboxFiles by remember { mutableStateOf(listOf<String>()) }
+
+    fun refresh() {
+        val status = harnessService?.pythonStatus()
+        if (status != null) {
+            statusLine = buildString {
+                append("uptime=${status.optLong("uptime_ms", 0) / 1000}s  execs=${status.optLong("exec_count", 0)}")
+                append("\nheap=")
+                val free = status.optInt("heap_free", -1)
+                append(if (free >= 0) "$free B free" else "?")
+                append("  (${status.optInt("heap_kb", 0)} KB, ${status.optString("heap_source", "?")})")
+                val err = status.optString("last_error", "")
+                if (err.isNotBlank()) append("\nlast_error: ${err.take(300)}")
+            }
+        }
+        sandboxFiles = harnessService?.pythonSandboxListing() ?: emptyList()
+    }
+    LaunchedEffect(Unit) { refresh() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.menu_python)) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    stringResource(R.string.python_description),
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    if (statusLine.isBlank()) stringResource(R.string.python_status_never_booted) else statusLine,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(stringResource(R.string.python_sandbox, sandboxFiles.size), fontWeight = FontWeight.Bold)
+                if (sandboxFiles.isEmpty()) {
+                    Text(stringResource(R.string.python_sandbox_empty), style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 160.dp)) {
+                        items(sandboxFiles.size) { i ->
+                            Text("- ${sandboxFiles[i]}", maxLines = 2)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row {
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        harnessService?.restartPython()
+                        statusLine = ""
+                        refresh()
+                    }
+                }) { Text(stringResource(R.string.btn_python_restart)) }
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        harnessService?.wipePythonSandbox()
+                        statusLine = ""
+                        refresh()
+                    }
+                }) { Text(stringResource(R.string.btn_python_wipe)) }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(onClick = onDismiss) { Text(stringResource(R.string.btn_close)) }
+            }
         }
     )
 }

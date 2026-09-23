@@ -69,6 +69,9 @@ run() {
 
 run com.ai.harnessdroid.RealLLME2ETest || FAILED=$((FAILED + 1))
 
+# The LLM must generate a simple Python plan and run it in the MicroPython VM.
+run com.ai.harnessdroid.PythonPlanE2ETest || FAILED=$((FAILED + 1))
+
 # The Gmail E2E needs a signed-in inbox to establish ground truth.
 if [ "$(adb -s "$SERIAL" shell dumpsys account 2>/dev/null | grep -cE 'Account \{name=.*type=com.google')" -gt 0 ]; then
   run com.ai.harnessdroid.SummarizeLastMailE2ETest || FAILED=$((FAILED + 1))

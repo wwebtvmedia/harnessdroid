@@ -35,6 +35,10 @@ class AgentLoop(
 ) {
     private val TAG = "AgentLoop"
     private var sessionLog = mutableListOf<SessionEvent>()
+    // Multi-Think (MULTITHINK_DESIGN.md): the System-2 state — standing goal and
+    // mission card — that the per-turn FSM (System 1) must never lose to context
+    // compression. Persisted under <filesDir>/goalstack/, one file per session.
+    private val goalStack = GoalStack(sessionPersistence.baseDir, sessionPersistence.sessionId, forensicLogger)
     // Compression and mitigation configuration. Read from system properties/env vars so JVM
     // unit tests can override them; on a real Android process these resolve to the defaults.
     // Inline-history budget: the model's context window decides it (via
@@ -104,6 +108,11 @@ class AgentLoop(
         contextEmbedder = null
     }
 
+    /** Purge paths: the standing goal dies with the session that set it. */
+    fun resetGoal() {
+        goalStack.clear()
+    }
+
     suspend fun runTask(taskInstruction: String, maxTurns: Int = 10): String = withContext(Dispatchers.IO) {
         forensicLogger.logEvent("LOOP_INIT", "Discovering tools...")
         val toolSchemasRaw = toolRegistry.discoverAndBindTools()
@@ -168,6 +177,11 @@ class AgentLoop(
                 sessionPersistence.flushLog(sessionLog)
             }
         }
+
+        // System 2 bookkeeping: the first task of a session becomes the standing
+        // goal, later tasks are missions under it. goalText goes ahead of every
+        // FSM prompt below so the long-term objective survives compression.
+        val goalText = goalStack.attachTask(taskInstruction, maxTurns)
 
         sessionLog = sessionPersistence.loadLog()
         sessionLog.add(SessionEvent("system", "Goal: $taskInstruction"))
@@ -321,11 +335,11 @@ Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
                 // using it for the rest of the task.
                 val (prompt, hintTool) = buildFocusedPrompt(taskInstruction, sessionLog, toolNameList)
                 focusedHintTool = hintTool
-                rawToolChoice = generateWithContext(latentPrefix, memoryText + prompt, "FSM_STATE_1_FOCUSED").trim()
+                rawToolChoice = generateWithContext(latentPrefix, goalText + memoryText + prompt, "FSM_STATE_1_FOCUSED").trim()
                 forensicLogger.logEvent("FSM_STATE_1_FOCUSED", "LLM replied: $rawToolChoice")
             } else {
                 forensicLogger.logEvent("FSM_STATE_1", "Asking LLM to pick a tool.")
-                rawToolChoice = generateWithContext(latentPrefix, memoryText + step1Prompt, "FSM_STATE_1").trim()
+                rawToolChoice = generateWithContext(latentPrefix, goalText + memoryText + step1Prompt, "FSM_STATE_1").trim()
                 forensicLogger.logEvent("FSM_STATE_1_RESPONSE", "LLM replied: $rawToolChoice")
             }
             var toolChoice = rawToolChoice
@@ -354,7 +368,7 @@ Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
                     "\n\nYour previous reply did not name a tool from the list. " +
                     "Reply with ONE final line: harness have to use <tool_name>, " +
                     "where <tool_name> is EXACTLY one of the tool names listed above (for example launch_app)."
-                val retryRaw = generateWithContext(latentPrefix, memoryText + retryPrompt, "FSM_STATE_1_RETRY").trim()
+                val retryRaw = generateWithContext(latentPrefix, goalText + memoryText + retryPrompt, "FSM_STATE_1_RETRY").trim()
                 forensicLogger.logEvent("FSM_STATE_1_RETRY", "LLM replied: $retryRaw")
                 toolChoice = extractToolName(retryRaw, filteredToolsArray, appLaunchedSuccessfully, lastExecutedTool)
 
@@ -363,7 +377,7 @@ Output exactly one of these: 'harness have to use <tool_name>' or 'NONE'.
                     // to the focused prompt and stick with it for the remaining turns.
                     forceFocused = true
                     val (focusedPrompt, hintTool) = buildFocusedPrompt(taskInstruction, sessionLog, toolNameList)
-                    val focusedRaw = generateWithContext(latentPrefix, memoryText + focusedPrompt, "FSM_STATE_1_FOCUSED").trim()
+                    val focusedRaw = generateWithContext(latentPrefix, goalText + memoryText + focusedPrompt, "FSM_STATE_1_FOCUSED").trim()
                     forensicLogger.logEvent("FSM_STATE_1_FOCUSED", "LLM replied: $focusedRaw")
                     toolChoice = extractToolName(focusedRaw, filteredToolsArray, appLaunchedSuccessfully, lastExecutedTool)
                     if (hintTool != null && toolChoice in INTERACTIVE_TOOLS) {
@@ -408,7 +422,7 @@ Provide the final answer to the user based on the conversation and tool results 
                 }
 
                 forensicLogger.logEvent("FSM_STATE_1B", "Asking LLM for final answer.")
-                finalResult = generateWithContext(latentPrefix, memoryText + step1bPrompt, "FSM_STATE_1B").trim()
+                finalResult = generateWithContext(latentPrefix, goalText + memoryText + step1bPrompt, "FSM_STATE_1B").trim()
                 // Tiny models often ignore the "no plan" rule and echo a <PLAN> block
                 // (or numbered steps) instead of answering. Strip that scaffolding;
                 // if nothing spoken remains, one corrective retry.
@@ -426,7 +440,7 @@ Provide the final answer to the user based on the conversation and tool results 
                         "in the conversation history (names, senders, subjects). " +
                         "No plan, no steps, no tool names, never the word NONE."
                     var retry1b = sanitizeFinalAnswer(
-                        generateWithContext(latentPrefix, memoryText + retry1bPrompt, "FSM_STATE_1B_RETRY").trim()
+                        generateWithContext(latentPrefix, goalText + memoryText + retry1bPrompt, "FSM_STATE_1B_RETRY").trim()
                     )
                     if (retry1b.isNoneEcho()) retry1b = ""
                     if (retry1b.isNotBlank()) {
@@ -460,7 +474,7 @@ Do NOT output any other text or explanation.
             """.trimIndent()
             
             forensicLogger.logEvent("FSM_STATE_2", "Asking LLM to generate arguments for $toolChoice.")
-            val argsResponse = generateWithContext(latentPrefix, memoryText + step2Prompt, "FSM_STATE_2").trim()
+            val argsResponse = generateWithContext(latentPrefix, goalText + memoryText + step2Prompt, "FSM_STATE_2").trim()
             val arguments = cleanJson(argsResponse)
             
             forensicLogger.logEvent("PLAN_TOOL_CALL", "Executing '$toolChoice' with args: $arguments")
@@ -480,6 +494,14 @@ Do NOT output any other text or explanation.
             forensicLogger.logEvent("TOOL_RESULT", "Result from '$toolChoice': $toolResultJson")
             sessionLog.add(SessionEvent("tool", toolResultJson, toolName = toolChoice))
             sessionPersistence.flushLog(sessionLog)
+
+            // System 2 journal: a one-line brief per turn, digested by the
+            // end-of-task consolidation pass below.
+            goalStack.recordTurn(
+                toolChoice,
+                !toolResultJson.contains("\"ok\":false"),
+                toolResultJson
+            )
         }
         
         if (turns >= maxTurns) {
@@ -497,6 +519,17 @@ Do NOT output any other text or explanation.
                 forensicLogger.logEvent("MEMORY_EXTRACT", "$stored new facts stored")
             } catch (e: Exception) {
                 forensicLogger.logEvent("MEMORY_EXTRACT_ERROR", "extraction failed: ${e.message}")
+            }
+        }
+
+        // System 2 pass (Multi-Think): fold this task's turn briefs into the
+        // standing goal card once, instead of paying for it every turn. Skipped
+        // for the mock LLM used in CI, like the memory extraction above.
+        if (!USE_MOCK_LLM) {
+            try {
+                goalStack.consolidate { prompt -> llmClient.generateText(prompt) }
+            } catch (e: Exception) {
+                forensicLogger.logEvent("S2_CONSOLIDATE_ERROR", e.message ?: "unknown")
             }
         }
 
@@ -761,7 +794,8 @@ Reply with the final answer to the user: 1-3 plain English sentences using the f
         val coreTools = setOf(
             "launch_app", "send_android_intent", "list_installed_apps",
             "list_compatible_intent_apps", "get_os_info", "ask_human_for_input",
-            "read_screen", "tap_screen", "swipe_screen", "tap_element", "osp_query"
+            "read_screen", "tap_screen", "swipe_screen", "tap_element", "osp_query",
+            "run_python_plan"
         )
 
         val tokens = preferred.split(Regex("\\s+|[,\\-]"))

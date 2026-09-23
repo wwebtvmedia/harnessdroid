@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.Continuation
@@ -60,6 +61,12 @@ open class ToolRegistry(
      * returns its final answer. Null (or [allowDelegation] false) = delegation disabled.
      */
     var delegateHandler: (suspend (task: String, agentType: String) -> String)? = null
+
+    /**
+     * Injected by the harness service: the embedded MicroPython VM that executes
+     * Python plans. Null = the run_python_plan tool is not exposed.
+     */
+    var pythonEngine: com.ai.harnessdroid.python.PythonEngine? = null
 
     private val mcpRequestId = AtomicInteger(1)
     private val pendingRequests = ConcurrentHashMap<Int, Continuation<JSONObject>>()
@@ -291,6 +298,21 @@ open class ToolRegistry(
                 }
             }
         """.trimIndent()
+        val runPythonPlanTool = """
+            {
+                "name": "run_python_plan",
+                "description": "Run a small Python program inside the sandboxed MicroPython VM. Use it for calculations, text/data processing, file notes inside the VM, or scheduled background work. Available: print, json, open(), os, time, asyncio, call_tool(name, args) to call other tools. Long programs: write them with mode='save' then mode='append' before mode='run'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": { "type": "string", "description": "Python source to run (mode='run') or write (mode='save'/'append')." },
+                        "mode": { "type": "string", "enum": ["run", "save", "append"], "description": "run = execute (default). save = write code to 'file'. append = add code to 'file'." },
+                        "file": { "type": "string", "description": "Sandbox file name for save/append/run (e.g. 'plans/plan.py')." },
+                        "timeout_seconds": { "type": "integer", "description": "Wall clock budget for mode='run', 1-120. Default 15." }
+                    }
+                }
+            }
+        """.trimIndent()
         allSchemas.put(JSONObject(builtInAskHuman))
         allSchemas.put(JSONObject(listIntentsTool))
         allSchemas.put(JSONObject(osInfoTool))
@@ -310,6 +332,10 @@ open class ToolRegistry(
             allSchemas.put(JSONObject(delegateTaskTool))
         }
         allSchemas.put(JSONObject(ospQueryTool))
+        // The embedded Python VM: only when an engine was injected into this registry.
+        if (pythonEngine != null) {
+            allSchemas.put(JSONObject(runPythonPlanTool))
+        }
         
         // Removed mock read_emails tool. Real tools will be discovered via Intent.
 
@@ -689,6 +715,88 @@ open class ToolRegistry(
             if (report.has("groundedness")) out.put("groundedness", report.optDouble("groundedness"))
             if (out.optString("mode") != "RESOLVED") {
                 out.put("hint", "No verified answer (see mode/detail). Do not invent one: say you could not verify it, or retry osp_query with a rephrased factual question.")
+            }
+            return@withContext out.toString()
+        }
+
+        if (toolName == "run_python_plan") {
+            if (!com.ai.harnessdroid.python.PythonSettings.enabled) {
+                return@withContext JSONObject()
+                    .put("error", "The python VM is disabled by configuration (HARNESS_PYTHON_ENABLED=0).")
+                    .toString()
+            }
+            val engine = pythonEngine
+            if (engine == null || !engine.isRunning && !engine.start()) {
+                return@withContext JSONObject()
+                    .put("error", "The python VM is unavailable on this device.")
+                    .toString()
+            }
+            val args = try { JSONObject(jsonArgs) } catch (_: Exception) { JSONObject() }
+            val mode = args.optString("mode", "run").lowercase().ifBlank { "run" }
+            val file = args.optString("file", "").trim()
+            val code = args.optString("code", "")
+            val sandboxRoot = engine.sandboxDir.canonicalPath + File.separator
+
+            // save/append write plan files so a plan longer than one tool call can
+            // be composed across calls, then executed with mode='run'.
+            fun resolvePlanFile(): File? {
+                if (file.isEmpty() || file.contains("..") || file.startsWith("/")) return null
+                val f = File(engine.sandboxDir, file)
+                // canonical path keeps the guard airtight against symlink tricks.
+                return if (f.canonicalPath.startsWith(sandboxRoot)) f else null
+            }
+            if (mode == "save" || mode == "append") {
+                if (code.isEmpty()) {
+                    return@withContext JSONObject()
+                        .put("error", "mode='$mode' requires 'code' (the source to write).")
+                        .toString()
+                }
+                val target = resolvePlanFile()
+                    ?: return@withContext JSONObject()
+                        .put("error", "mode='$mode' requires a relative 'file' inside the python sandbox (e.g. 'plans/plan.py').")
+                        .toString()
+                target.parentFile?.mkdirs()
+                if (mode == "append") target.appendText(code) else target.writeText(code)
+                android.util.Log.i(TAG, "PYTHON_SAVE file=$file chars=${code.length} mode=$mode")
+                return@withContext JSONObject()
+                    .put("ok", true)
+                    .put("file", file)
+                    .put("size_chars", target.length())
+                    .put("hint", "Saved. Execute it with run_python_plan mode='run' file='$file'.")
+                    .toString()
+            }
+            if (mode != "run") {
+                return@withContext JSONObject()
+                    .put("error", "Unknown mode '$mode': use run, save or append.")
+                    .toString()
+            }
+            // mode='run': inline code, or a previously saved plan file.
+            val source = if (code.isNotBlank()) code else {
+                val target = resolvePlanFile()
+                    ?: return@withContext JSONObject()
+                        .put("error", "mode='run' without 'code' requires a relative 'file' previously saved (e.g. 'plans/plan.py').")
+                        .toString()
+                if (!target.exists() || !target.isFile) {
+                    return@withContext JSONObject()
+                        .put("error", "Plan file '$file' does not exist in the python sandbox. Save it first with mode='save'.")
+                        .toString()
+                }
+                target.readText()
+            }
+            if (source.isBlank()) {
+                return@withContext JSONObject()
+                    .put("error", "run_python_plan needs 'code' (or file= of a saved plan): a non-empty Python program.")
+                    .toString()
+            }
+            val timeoutSeconds = args.optLong("timeout_seconds", 0L)
+            val timeoutMs = if (timeoutSeconds > 0) (timeoutSeconds * 1000L)
+                .coerceIn(1_000L, 120_000L).toInt() else null
+            val result = engine.exec(source, name = file.ifBlank { "inline" }, timeoutOverrideMs = timeoutMs)
+            val out = JSONObject().put("ok", result.ok)
+            if (result.output.isNotBlank()) out.put("output", result.output)
+            if (result.error != null) out.put("error", result.error)
+            if (!result.ok && result.error?.contains("timed out") == true) {
+                out.put("hint", "The plan hit its time budget. Split it into smaller steps, avoid 'while True' without sleeps, or raise timeout_seconds.")
             }
             return@withContext out.toString()
         }
