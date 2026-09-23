@@ -179,23 +179,26 @@ Configuration requise : Android 13+ recommandé pour de meilleures performances 
 
 ## Notes de version 1.2.17 (champ « What's new » / Actualités) — prêt à coller
 
-### Anglais (en-US), 422 caractères (max 500)
+Actualisées pour le bundle versionCode 26 : la version embarque aussi le mode
+autonome (anneau fermé But & Mission) ajouté après la première préparation.
+
+### Anglais (en-US), 430 caractères (max 500)
 
 ```
 New in 1.2.17:
-• Built-in Python engine: ask for a Python program and the agent writes it and runs it in a sandboxed on-device MicroPython VM; files persist and scheduled services keep running between tasks.
-• Goal & mission memory: standing goals now survive across tasks, with a consolidation pass after each task.
-• New Python panel in the menu: VM status, restart, wipe sandbox.
+• Built-in Python engine: the agent writes and runs Python in a sandboxed on-device MicroPython VM; files persist and scheduled services keep running between tasks.
+• Goal & mission memory: standing goals survive across tasks, and a new Autonomous mode chains missions back to back within safe budgets.
+• New menu panels: Python (VM status, restart, wipe) and Goal & Mission.
 • Bug fixes and stability improvements.
 ```
 
-### Français (fr-FR), 495 caractères (max 500)
+### Français (fr-FR), 463 caractères (max 500)
 
 ```
 Nouveautés 1.2.17 :
-• Moteur Python intégré : demandez un programme Python, l'agent l'écrit et l'exécute dans une VM MicroPython bac à sable sur l'appareil ; les fichiers persistent et les services programmés continuent entre les tâches.
-• Mémoire but & mission : les buts permanents survivent désormais entre les tâches, avec une passe de consolidation après chacune.
-• Nouveau panneau Python dans le menu : état de la VM, redémarrage, vidage du bac à sable.
+• Moteur Python intégré : l'agent écrit et exécute du Python dans une VM MicroPython bac à sable sur l'appareil ; les fichiers persistent et les services programmés continuent entre les tâches.
+• Mémoire but & mission : les buts survivent entre les tâches, et un nouveau mode autonome enchaîne les missions seules, dans des budgets sûrs.
+• Nouveaux panneaux : Python (état VM, redémarrage) et But & Mission.
 • Correctifs et gains de stabilité.
 ```
 
